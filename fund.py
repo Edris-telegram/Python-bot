@@ -66,9 +66,6 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
 
-    # Start Telegram bot
-    asyncio.run(run())    async with client:
-        await main()
-
-if __name__ == '__main__':
-    asyncio.run(run())
+    # Start Telegram bot without asyncio.run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run())
