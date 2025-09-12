@@ -50,6 +50,7 @@ async def main():
 
 # ====== Run bot with session string ======
 async def run():
+    from telethon.sessions import StringSession  # fix missing import
     if SESSION_STRING:
         async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
             await main()
@@ -57,27 +58,7 @@ async def run():
         logger.error("⚠️ SESSION_STRING not set in environment.")
         exit()
 
+# ====== Fixed entry point ======
 if __name__ == "__main__":
-    client.loop.run_until_complete(run())async def main():
-    while True:
-        msg = random.choice(messages)
-        try:
-            await client.send_message(TARGET, msg)
-            print(f"✅ Sent: {msg}")
-        except Exception as e:
-            print(f"❌ Error sending message: {e}")
-        await asyncio.sleep(30)
-
-# ====== Run both Flask + Bot ======
-async def runner():
-    await client.start()
-    asyncio.create_task(main())
-
-if __name__ == "__main__":
-    import threading
-
-    # Start Flask in background thread
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000)).start()
-
-    with client:
-        client.loop.run_until_complete(runner())
+    import asyncio
+    asyncio.run(run())
