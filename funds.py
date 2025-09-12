@@ -36,7 +36,8 @@ if not messages:
 # ====== Create client ======
 client = TelegramClient("funds_bot", API_ID, API_HASH)
 
-async def main():
+# ====== Main function now accepts client argument ======
+async def main(client):
     logger.info("🚀 Bot started. Sending messages every 30s...")
 
     while True:
@@ -50,10 +51,10 @@ async def main():
 
 # ====== Run bot with session string ======
 async def run():
-    from telethon.sessions import StringSession  # fix missing import
+    from telethon.sessions import StringSession  # needed for session login
     if SESSION_STRING:
-        async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
-            await main()
+        async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as session_client:
+            await main(session_client)  # pass the connected client to main
     else:
         logger.error("⚠️ SESSION_STRING not set in environment.")
         exit()
