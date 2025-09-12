@@ -1,31 +1,59 @@
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 import asyncio
 import random
+import os
+from flask import Flask
 
-# ====== Your API credentials ======
-API_ID = 10521518
-API_HASH = "d66639f32854249745e33231cd1a535a"
+# ====== Dummy web server to keep Render happy ======
+app = Flask(__name__)
 
-# ====== Unique session name for this bot ======
-client = TelegramClient("funds_bot", API_ID, API_HASH)
+@app.route("/")
+def home():
+    return "Bot is running!"
 
-# ====== Load messages from text.txt ======
-with open("text.txt", "r", encoding="utf-8") as f:
-    messages = [line.strip() for line in f if line.strip()]
+# ====== Environment Variables ======
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION_STRING = os.getenv("SESSION_STRING")
+TARGET = int(os.getenv("TARGET"))   # Group/User ID
+TEXT_FILE = os.getenv("TEXT_FILE", "text.txt")  # default = text.txt
+
+# ====== Client ======
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+
+# ====== Load messages ======
+try:
+    with open(TEXT_FILE, "r", encoding="utf-8") as f:
+        messages = [line.strip() for line in f if line.strip()]
+except FileNotFoundError:
+    print(f"⚠️ Could not find {TEXT_FILE}")
+    messages = []
 
 if not messages:
-    print("⚠️ No messages found in text.txt")
+    print("⚠️ No messages found in file, exiting…")
     exit()
-
-# ====== Your group ID (with prefix for supergroups/channels) ======
-TARGET = -1003067016330
 
 async def main():
     while True:
         msg = random.choice(messages)
-        await client.send_message(TARGET, msg)
-        print(f"Sent: {msg}")
+        try:
+            await client.send_message(TARGET, msg)
+            print(f"✅ Sent: {msg}")
+        except Exception as e:
+            print(f"❌ Error sending message: {e}")
         await asyncio.sleep(30)
 
-with client:
-    client.loop.run_until_complete(main())
+# ====== Run both Flask + Bot ======
+async def runner():
+    await client.start()
+    asyncio.create_task(main())
+
+if __name__ == "__main__":
+    import threading
+
+    # Start Flask in background thread
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000)).start()
+
+    with client:
+        client.loop.run_until_complete(runner())
