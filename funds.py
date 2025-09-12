@@ -1,40 +1,64 @@
 from telethon import TelegramClient
-from telethon.sessions import StringSession
 import asyncio
 import random
 import os
-from flask import Flask
+import logging
 
-# ====== Dummy web server to keep Render happy ======
-app = Flask(__name__)
+# ====== Setup logging ======
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-@app.route("/")
-def home():
-    return "Bot is running!"
-
-# ====== Environment Variables ======
+# ====== Your API credentials from environment ======
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-SESSION_STRING = os.getenv("SESSION_STRING")
-TARGET = int(os.getenv("TARGET"))   # Group/User ID
-TEXT_FILE = os.getenv("TEXT_FILE", "text.txt")  # default = text.txt
+SESSION_STRING = os.getenv("SESSION_STRING")  # must be set in Render
 
-# ====== Client ======
-client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+# ====== Target group/user from environment ======
+TARGET = os.getenv("TARGET")  # use str, Telethon handles it
 
-# ====== Load messages ======
-try:
-    with open(TEXT_FILE, "r", encoding="utf-8") as f:
-        messages = [line.strip() for line in f if line.strip()]
-except FileNotFoundError:
-    print(f"⚠️ Could not find {TEXT_FILE}")
-    messages = []
+# ====== Message file ======
+TEXT_FILE = os.getenv("TEXT_FILE", "text.txt")  # default if not set
 
-if not messages:
-    print("⚠️ No messages found in file, exiting…")
+if not os.path.exists(TEXT_FILE):
+    logger.error(f"⚠️ Message file {TEXT_FILE} not found!")
     exit()
 
+with open(TEXT_FILE, "r", encoding="utf-8") as f:
+    messages = [line.strip() for line in f if line.strip()]
+
+if not messages:
+    logger.error(f"⚠️ No messages found in {TEXT_FILE}")
+    exit()
+
+# ====== Create client ======
+client = TelegramClient("funds_bot", API_ID, API_HASH)
+
 async def main():
+    logger.info("🚀 Bot started. Sending messages every 30s...")
+
+    while True:
+        msg = random.choice(messages)
+        try:
+            await client.send_message(TARGET, msg)
+            logger.info(f"✅ Sent: {msg}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send: {e}")
+        await asyncio.sleep(30)
+
+# ====== Run bot with session string ======
+async def run():
+    if SESSION_STRING:
+        async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
+            await main()
+    else:
+        logger.error("⚠️ SESSION_STRING not set in environment.")
+        exit()
+
+if __name__ == "__main__":
+    client.loop.run_until_complete(run())async def main():
     while True:
         msg = random.choice(messages)
         try:
