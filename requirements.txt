@@ -1,4 +1,4 @@
-bytelethon
+telethon
 flask
 fastapi
 uvicorn
