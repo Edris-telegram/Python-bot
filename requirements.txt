@@ -1,4 +1,6 @@
-telethon
+bytelethon
 flask
 fastapi
 uvicorn
+selenium
+webdriver-manager
