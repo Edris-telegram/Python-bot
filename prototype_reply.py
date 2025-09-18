@@ -139,7 +139,7 @@ async def try_selectors(page, selectors, timeout=5000):
             continue
     return None
 
-async def reply_to_tweet(tweet_url, message, headless=True):
+async def reply_to_tweet(tweet_url, message, headless=True, max_retries=3):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
         print("ERROR: No cookie found. Set TW_COOKIE env var.", flush=True)
@@ -160,6 +160,7 @@ async def reply_to_tweet(tweet_url, message, headless=True):
             await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(2)
 
+            # Locate textbox
             textbox_selectors = [
                 "div[aria-label='Tweet text']",
                 "div[role='textbox'][contenteditable='true']",
@@ -174,19 +175,35 @@ async def reply_to_tweet(tweet_url, message, headless=True):
             await page.fill(sel, message)
             await asyncio.sleep(0.5)
 
+            # Locate send/reply button with retry
             send_selectors = [
                 "div[data-testid='tweetButtonInline']",
                 "div[data-testid='tweetButton']",
                 "div[data-testid='replyButton']",
                 "div[role='button'][data-testid='tweetButton']",
+                "div[aria-label='Tweet']",
             ]
-            btn_sel = await try_selectors(page, send_selectors, timeout=5000)
-            if btn_sel:
-                await page.click(btn_sel)
-                await asyncio.sleep(3)
-                print("✅ Tweet posted!", flush=True)
-            else:
-                print("❌ Could not find send button.", flush=True)
+            clicked = False
+            for attempt in range(1, max_retries + 1):
+                btn_sel = await try_selectors(page, send_selectors, timeout=5000)
+                if btn_sel:
+                    try:
+                        btn = await page.wait_for_selector(btn_sel, timeout=5000)
+                        if btn:
+                            await btn.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.3)
+                            await btn.click()
+                            await asyncio.sleep(3)
+                            print(f"✅ Tweet posted on attempt {attempt}!", flush=True)
+                            clicked = True
+                            break
+                    except Exception:
+                        pass
+                if not clicked:
+                    print(f"⚠️ Retry {attempt} failed, trying again...", flush=True)
+                    await asyncio.sleep(1)
+            if not clicked:
+                print("❌ Could not find/send tweet button after retries.", flush=True)
 
         except Exception as e:
             print("❌ Exception during reply:", e, flush=True)
