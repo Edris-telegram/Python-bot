@@ -139,7 +139,11 @@ async def try_selectors(page, selectors, timeout=5000):
             continue
     return None
 
-async def reply_to_tweet(tweet_url, message, headless=True, max_retries=3):
+async def reply_to_tweet(tweet_url, message, headless=True, retries=3):
+    if not tweet_url:
+        print("⚠️ No valid tweet URL. Skipping reply.", flush=True)
+        return
+
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
         print("ERROR: No cookie found. Set TW_COOKIE env var.", flush=True)
@@ -149,70 +153,60 @@ async def reply_to_tweet(tweet_url, message, headless=True, max_retries=3):
         print("ERROR: Failed to parse cookie input.", flush=True)
         return
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        context = await browser.new_context()
+    attempt = 0
+    while attempt < retries:
         try:
-            await context.add_cookies(cookies)
-            page = await context.new_page()
-            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(2)
-            await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(2)
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
+                context = await browser.new_context()
+                await context.add_cookies(cookies)
+                page = await context.new_page()
+                await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
+                await asyncio.sleep(2)
+                await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
+                await asyncio.sleep(2)
 
-            # Locate textbox
-            textbox_selectors = [
-                "div[aria-label='Tweet text']",
-                "div[role='textbox'][contenteditable='true']",
-                "div[aria-label='Reply'] div[role='textbox']",
-                "div[data-testid='tweetTextarea_0']",
-            ]
-            sel = await try_selectors(page, textbox_selectors, timeout=7000)
-            if not sel:
-                print("❌ Could not find textbox selector.", flush=True)
-                return
-            await page.click(sel)
-            await page.fill(sel, message)
-            await asyncio.sleep(0.5)
+                textbox_selectors = [
+                    "div[aria-label='Tweet text']",
+                    "div[role='textbox'][contenteditable='true']",
+                    "div[aria-label='Reply'] div[role='textbox']",
+                    "div[data-testid='tweetTextarea_0']",
+                ]
+                sel = await try_selectors(page, textbox_selectors, timeout=7000)
+                if not sel:
+                    raise Exception("Could not find textbox selector")
 
-            # Locate send/reply button with retry
-            send_selectors = [
-                "div[data-testid='tweetButtonInline']",
-                "div[data-testid='tweetButton']",
-                "div[data-testid='replyButton']",
-                "div[role='button'][data-testid='tweetButton']",
-                "div[aria-label='Tweet']",
-            ]
-            clicked = False
-            for attempt in range(1, max_retries + 1):
+                await page.click(sel)
+                await page.fill(sel, message)
+                await asyncio.sleep(0.5)
+
+                send_selectors = [
+                    "div[data-testid='tweetButtonInline']",
+                    "div[data-testid='tweetButton']",
+                    "div[data-testid='replyButton']",
+                    "div[role='button'][data-testid='tweetButton']",
+                    "div[aria-label='Tweet']",
+                    "div[aria-label='Reply']",
+                    "div[role='button'][data-focusable='true']",
+                ]
                 btn_sel = await try_selectors(page, send_selectors, timeout=5000)
                 if btn_sel:
-                    try:
-                        btn = await page.wait_for_selector(btn_sel, timeout=5000)
-                        if btn:
-                            await btn.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.3)
-                            await btn.click()
-                            await asyncio.sleep(3)
-                            print(f"✅ Tweet posted on attempt {attempt}!", flush=True)
-                            clicked = True
-                            break
-                    except Exception:
-                        pass
-                if not clicked:
-                    print(f"⚠️ Retry {attempt} failed, trying again...", flush=True)
-                    await asyncio.sleep(1)
-            if not clicked:
-                print("❌ Could not find/send tweet button after retries.", flush=True)
-
+                    btn = await page.query_selector(btn_sel)
+                    await btn.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.5)
+                    await btn.click()
+                    await asyncio.sleep(3)
+                    print("✅ Tweet posted!", flush=True)
+                    await context.close()
+                    await browser.close()
+                    return
+                else:
+                    raise Exception("Could not find/send tweet button")
         except Exception as e:
-            print("❌ Exception during reply:", e, flush=True)
-        finally:
-            try:
-                await context.close()
-            except Exception:
-                pass
-            await browser.close()
+            attempt += 1
+            print(f"⚠️ Retry {attempt} failed: {e}, trying again...", flush=True)
+            await asyncio.sleep(2)
+    print("❌ Could not find/send tweet button after retries.", flush=True)
 
 # ------------------ FASTAPI DUMMY SERVER ------------------
 app = FastAPI()
