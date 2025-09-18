@@ -1,8 +1,11 @@
-# prototype_reply.py
+# prototype_reply_with_dummy_web.py
 import time
 import os
 import json
 from playwright.sync_api import sync_playwright
+from fastapi import FastAPI
+import threading
+import uvicorn
 
 # -------- CONFIG --------
 COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # can be raw auth_token, cookie string, or path to cookies.json
@@ -21,7 +24,6 @@ def parse_cookie_input(cookie_input):
     if not cookie_input:
         return []
 
-    # If looks like a file path
     if os.path.exists(cookie_input):
         with open(cookie_input, "r") as f:
             try:
@@ -32,7 +34,6 @@ def parse_cookie_input(cookie_input):
                 print(f"[❌] Failed reading cookies.json: {e}")
                 return []
 
-    # If it’s a raw token
     if "=" not in cookie_input:
         return [{
             "name": "auth_token",
@@ -41,7 +42,6 @@ def parse_cookie_input(cookie_input):
             "path": "/"
         }]
 
-    # Otherwise parse string
     parts = [p.strip() for p in cookie_input.split(";") if p.strip()]
     cookies = []
     for p in parts:
@@ -193,8 +193,23 @@ def run_once(headless=True):
                 pass
             browser.close()
 
+# -------- Dummy FastAPI Server --------
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"status": "alive", "message": "Render service is up!"}
+
+def start_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+# -------- Main --------
 if __name__ == "__main__":
-    # set HEADLESS=0 to run visible (for debugging)
-    headless_env = os.environ.get("HEADLESS", "1")
-    headless_flag = False if headless_env in ("0", "false", "False") else True
+    import threading
+    # Start dummy web server in a background thread
+    threading.Thread(target=start_dummy_server, daemon=True).start()
+
+    # Run Playwright code exactly as before
+    headless_flag = os.environ.get("HEADLESS", "1") not in ("0", "false", "False")
     run_once(headless=headless_flag)
