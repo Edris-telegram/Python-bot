@@ -2,37 +2,17 @@ import time
 import os
 import json
 import threading
+import socket
 from playwright.sync_api import sync_playwright
-from fastapi import FastAPI, Request
-import uvicorn
 
 # -------- CONFIG --------
 COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # auth_token, cookie string, or path to cookies.json
+PORT = int(os.environ.get("PORT", 10000))        # Render-assigned port
 # ------------------------
 
 # Storage for the latest raid info
 latest_raid = {"tweet_url": None, "message": None}
 
-# ---------------- FastAPI App ----------------
-app = FastAPI()
-
-# --- Dummy root endpoint so Render keeps the service alive ---
-@app.get("/")
-async def root():
-    return {"status": "alive", "message": "Render service is up!"}
-
-@app.post("/new_raid")
-async def new_raid(req: Request):
-    data = await req.json()
-    tweet_url = data.get("tweet_url")
-    message = data.get("message")
-    if tweet_url and message:
-        latest_raid["tweet_url"] = tweet_url
-        latest_raid["message"] = message
-        print(f"[🌐] New raid received: {tweet_url} | {message}")
-        return {"status": "ok"}
-    return {"status": "error", "reason": "missing fields"}
-# ---------------------------------------------
 
 def parse_cookie_input(cookie_input):
     if not cookie_input:
@@ -61,6 +41,7 @@ def parse_cookie_input(cookie_input):
             cookies.append({"name": name.strip(), "value": val.strip(), "domain": ".x.com", "path": "/"})
     return cookies
 
+
 def try_selectors(page, selectors, timeout=5000):
     for sel in selectors:
         try:
@@ -70,6 +51,7 @@ def try_selectors(page, selectors, timeout=5000):
         except Exception:
             continue
     return None
+
 
 def run_once(headless=True):
     tweet_url = latest_raid.get("tweet_url")
@@ -172,6 +154,7 @@ def run_once(headless=True):
             context.close()
             browser.close()
 
+
 def loop_runner():
     while True:
         try:
@@ -180,19 +163,19 @@ def loop_runner():
             print(f"❌ Exception in runner: {e}")
         time.sleep(30)  # check every 30s
 
-# --- Heartbeat thread to keep Render detecting logs ---
+
 def heartbeat():
+    """Fake server so Render sees the service as alive"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("0.0.0.0", PORT))
+    s.listen(1)
+    print(f"[💓] Heartbeat socket running on port {PORT}")
     while True:
-        print("[💓] Service alive and running...")
-        time.sleep(30)
+        conn, addr = s.accept()
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nService alive")
+        conn.close()
+
 
 if __name__ == "__main__":
-    # Start raid runner in background thread
     threading.Thread(target=loop_runner, daemon=True).start()
-    
-    # Start heartbeat thread
-    threading.Thread(target=heartbeat, daemon=True).start()
-
-    # Listen on the Render-assigned port
-    port = int(os.environ["PORT"])
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    heartbeat()
