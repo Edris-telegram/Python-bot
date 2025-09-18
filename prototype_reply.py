@@ -247,7 +247,18 @@ async def handler(event):
 # ------------------ MAIN ------------------
 def main():
     print("🚀 Starting raid_auto_with_reply...")
-    threading.Thread(target=start_dummy_server, daemon=True).start()
+
+    # Step 1: Start dummy FastAPI server in a separate thread
+    server_thread = threading.Thread(target=start_dummy_server, daemon=True)
+    server_thread.start()
+
+    # Step 2: Wait a few seconds to ensure the server is fully up
+    print("⏳ Waiting for dummy server to start...")
+    time.sleep(3)  # adjust if needed for Render
+
+    print("✅ Dummy server should be live. Proceeding to start Telegram client...")
+
+    # Step 3: Start Telegram bot
     client.start()
     print("✅ Connected to Telegram. Waiting for raids...")
     client.run_until_disconnected()
