@@ -223,9 +223,9 @@ async def handler(event):
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
         message_to_send = get_random_message()
 
-        # Call Twitter reply
+        # Call Twitter reply in a separate thread to avoid async conflict
         print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}", flush=True)
-        reply_to_tweet(tweet_url, message_to_send)
+        await asyncio.to_thread(reply_to_tweet, tweet_url, message_to_send)
 
         entry = {
             "time": now_iso(),
