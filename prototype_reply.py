@@ -8,7 +8,7 @@ from datetime import datetime
 from telethon import TelegramClient, events, functions
 from playwright.sync_api import sync_playwright
 from fastapi import FastAPI
-import threading
+import asyncio
 import uvicorn
 
 # ------------------ TELEGRAM CONFIG ------------------
@@ -34,8 +34,8 @@ TWEET_RE = re.compile(
 
 # ------------------ TWITTER CONFIG ------------------
 COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # set as env var
+# ----------------------------------------------------
 
-# ------------------ UTILITY FUNCTIONS ------------------
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
 
@@ -58,12 +58,12 @@ def extract_tweet(text):
         return None, None
     m = TWEET_RE.search(text)
     if m:
-        return m.group(1), m.group(2)
+        return m.group(1), m.group(2)  # url, id
     return None, None
 
 def get_random_message(file_path="messages.txt"):
     if not os.path.exists(file_path):
-        print(f"[⚠️] {file_path} not found. Using default trial replies.")
+        print(f"[⚠️] {file_path} not found. Using default trial replies.", flush=True)
         return random.choice(TRIAL_REPLIES)
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -72,23 +72,23 @@ def get_random_message(file_path="messages.txt"):
             return random.choice(TRIAL_REPLIES)
         return random.choice(lines)
     except Exception as e:
-        print(f"[⚠️] Error reading {file_path}: {e}")
+        print(f"[⚠️] Error reading {file_path}: {e}", flush=True)
         return random.choice(TRIAL_REPLIES)
 
-# ------------------ TELEGRAM CLIENT ------------------
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 async def click_inline_button(client, message, match_texts=("👊",)):
     buttons = getattr(message, "buttons", None) or getattr(message, "reply_markup", None)
     if not buttons:
-        print("[🔘] No inline buttons found")
+        print("[🔘] No inline buttons found", flush=True)
         return {"clicked": False, "reason": "no_buttons"}
+
     for row in buttons:
         for btn in row:
             lbl = getattr(btn, "text", "") or ""
             if any(mt.lower() in lbl.lower() for mt in match_texts):
                 try:
-                    print(f"[🔘] Clicking button: {lbl}")
+                    print(f"[🔘] Clicking button: {lbl}", flush=True)
                     res = await client(functions.messages.GetBotCallbackAnswerRequest(
                         peer=message.to_id,
                         msg_id=message.id,
@@ -99,7 +99,7 @@ async def click_inline_button(client, message, match_texts=("👊",)):
                     return {"clicked": False, "button_text": lbl, "error": repr(e)}
     return {"clicked": False, "reason": "no_matching_label"}
 
-# ------------------ TWITTER REPLY ------------------
+# ------------------ TWITTER REPLY FUNCTION ------------------
 def parse_cookie_input(cookie_input):
     if not cookie_input:
         return []
@@ -143,12 +143,13 @@ def try_selectors(page, selectors, timeout=5000):
 def reply_to_tweet(tweet_url, message, headless=True):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
-        print("ERROR: No cookie found. Set TW_COOKIE env var.")
+        print("ERROR: No cookie found. Set TW_COOKIE env var.", flush=True)
         return
     cookies = parse_cookie_input(cookie_str)
     if not cookies:
-        print("ERROR: Failed to parse cookie input.")
+        print("ERROR: Failed to parse cookie input.", flush=True)
         return
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
         context = browser.new_context()
@@ -190,7 +191,7 @@ def reply_to_tweet(tweet_url, message, headless=True):
                 except Exception:
                     continue
         except Exception as e:
-            print("❌ Exception during reply:", e)
+            print("❌ Exception during reply:", e, flush=True)
         finally:
             try:
                 context.close()
@@ -205,12 +206,6 @@ app = FastAPI()
 async def root():
     return {"status": "alive", "message": "Service is running"}
 
-def start_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
-    server = uvicorn.Server(config)
-    server.run()  # this blocks in thread, so main thread continues
-
 # ------------------ TELEGRAM HANDLER ------------------
 @client.on(events.NewMessage(chats=WATCH_GROUPS, incoming=True))
 async def handler(event):
@@ -223,12 +218,13 @@ async def handler(event):
             return
 
         tweet_url, tweet_id = extract_tweet(msg.text or "")
-        print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
+        print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}", flush=True)
 
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
         message_to_send = get_random_message()
 
-        print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}")
+        # Call Twitter reply
+        print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}", flush=True)
         reply_to_tweet(tweet_url, message_to_send)
 
         entry = {
@@ -242,17 +238,20 @@ async def handler(event):
         save_json_append(LOG_FILE, entry)
 
     except Exception as e:
-        print("❌ Error in handler:", repr(e))
+        print("❌ Error in handler:", repr(e), flush=True)
 
 # ------------------ MAIN ------------------
-def main():
-    print("🚀 Starting raid_auto_with_reply...")
-    # Start FastAPI in a background thread
-    threading.Thread(target=start_dummy_server, daemon=True).start()
-    print("✅ Dummy server started in background. Telegram bot will start now...")
-    client.start()
-    print("✅ Connected to Telegram. Waiting for raids...")
-    client.run_until_disconnected()
+async def main():
+    print("🚀 Starting raid_auto_with_reply...", flush=True)
+    # Start FastAPI server in background
+    config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), log_level="info")
+    server = uvicorn.Server(config)
+    asyncio.create_task(server.serve())
+
+    # Start Telegram client
+    await client.start()
+    print("✅ Connected to Telegram. Waiting for raids...", flush=True)
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
