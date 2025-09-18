@@ -181,5 +181,9 @@ def loop_runner():
         time.sleep(30)  # check every 30s
 
 if __name__ == "__main__":
+    # Start raid runner in background thread
     threading.Thread(target=loop_runner, daemon=True).start()
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+
+    # Listen on the Render-assigned port
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
