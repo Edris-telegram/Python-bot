@@ -184,7 +184,7 @@ if __name__ == "__main__":
     headless_env = os.environ.get("HEADLESS", "1")
     headless_flag = False if headless_env in ("0", "false", "False") else True
     run_once(headless=headless_flag)                "path": "/",
-            )
+            
     return cookies
 
 def try_selectors(page, selectors):
