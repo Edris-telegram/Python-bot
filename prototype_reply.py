@@ -1,22 +1,27 @@
+# prototype_reply.py
 import time
 import os
 import json
-import threading
-import socket
 from playwright.sync_api import sync_playwright
 
 # -------- CONFIG --------
-COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # auth_token, cookie string, or path to cookies.json
-PORT = int(os.environ.get("PORT", 10000))        # Render-assigned port
+COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # can be raw auth_token, cookie string, or path to cookies.json
+TWEET_URL = "https://x.com/Maldris15559/status/1924175415939121331"
+FIXED_MESSAGE = "Prototype reply — testing ✅"
 # ------------------------
 
-# Storage for the latest raid info
-latest_raid = {"tweet_url": None, "message": None}
-
-
 def parse_cookie_input(cookie_input):
+    """
+    Accept:
+      - raw auth_token
+      - full cookie string "name=val; name2=val2"
+      - path to cookies.json
+    Returns list of cookie dicts suitable for context.add_cookies([...]).
+    """
     if not cookie_input:
         return []
+
+    # If looks like a file path
     if os.path.exists(cookie_input):
         with open(cookie_input, "r") as f:
             try:
@@ -26,6 +31,8 @@ def parse_cookie_input(cookie_input):
             except Exception as e:
                 print(f"[❌] Failed reading cookies.json: {e}")
                 return []
+
+    # If it’s a raw token
     if "=" not in cookie_input:
         return [{
             "name": "auth_token",
@@ -33,16 +40,23 @@ def parse_cookie_input(cookie_input):
             "domain": ".x.com",
             "path": "/"
         }]
+
+    # Otherwise parse string
     parts = [p.strip() for p in cookie_input.split(";") if p.strip()]
     cookies = []
     for p in parts:
         if "=" in p:
             name, val = p.split("=", 1)
-            cookies.append({"name": name.strip(), "value": val.strip(), "domain": ".x.com", "path": "/"})
+            cookies.append({
+                "name": name.strip(),
+                "value": val.strip(),
+                "domain": ".x.com",
+                "path": "/"
+            })
     return cookies
 
-
 def try_selectors(page, selectors, timeout=5000):
+    """Wait for the first selector that appears."""
     for sel in selectors:
         try:
             handle = page.wait_for_selector(sel, timeout=timeout)
@@ -52,18 +66,10 @@ def try_selectors(page, selectors, timeout=5000):
             continue
     return None
 
-
 def run_once(headless=True):
-    tweet_url = latest_raid.get("tweet_url")
-    message = latest_raid.get("message")
-
-    if not tweet_url or not message:
-        print("⚠️ No raid data received yet.")
-        return
-
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
-        print("ERROR: No cookie found. Set TW_COOKIE env var.")
+        print("ERROR: No cookie found. Set TW_COOKIE env var (auth_token, cookie string, or cookies.json path).")
         return
 
     cookies = parse_cookie_input(cookie_str)
@@ -71,32 +77,41 @@ def run_once(headless=True):
         print("ERROR: Failed to parse cookie input.")
         return
 
-    print("Starting Playwright...")
+    print("Starting Playwright... (first run may download Chromium)")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = p.chromium.launch(
+            headless=headless,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
         context = browser.new_context()
         try:
             context.add_cookies(cookies)
             print("[🍪] Cookies applied")
+
             page = context.new_page()
 
+            # Visit home to apply cookies
             print("[→] Visiting home...")
             page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
-            print(f"[→] Opening tweet: {tweet_url}")
-            page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
+            # Open the tweet page
+            print(f"[→] Opening tweet: {TWEET_URL}")
+            page.goto(TWEET_URL, wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
+            # Try common textbox selectors
             textbox_selectors = [
                 "div[aria-label='Tweet text']",
                 "div[role='textbox'][contenteditable='true']",
                 "div[aria-label='Reply'] div[role='textbox']",
                 "div[data-testid='tweetTextarea_0']",
             ]
+
             sel = try_selectors(page, textbox_selectors, timeout=7000)
 
+            # If no textbox, attempt to click reply button
             if not sel:
                 reply_buttons = [
                     "div[data-testid='reply']",
@@ -105,13 +120,16 @@ def run_once(headless=True):
                 ]
                 rb = try_selectors(page, reply_buttons, timeout=5000)
                 if rb:
-                    print(f"[→] Clicking reply button ({rb})...")
-                    page.click(rb)
-                    time.sleep(1.5)
-                    sel = try_selectors(page, textbox_selectors, timeout=7000)
+                    try:
+                        print(f"[→] Clicking reply button ({rb})...")
+                        page.click(rb)
+                        time.sleep(1.5)
+                        sel = try_selectors(page, textbox_selectors, timeout=7000)
+                    except Exception as e:
+                        print(f"[⚠️] Failed clicking reply button: {e}")
 
             if not sel:
-                print("⚠️ Reply textbox not found.")
+                print("⚠️ Reply textbox not found — likely cookie issue.")
                 page.screenshot(path="debug_tweet.png")
                 print("Saved debug_tweet.png")
                 return
@@ -119,9 +137,10 @@ def run_once(headless=True):
             print(f"[→] Using textbox selector: {sel}")
             page.click(sel)
             time.sleep(0.3)
-            page.fill(sel, message)
+            page.fill(sel, FIXED_MESSAGE)
             time.sleep(0.4)
 
+            # Try send button selectors
             send_selectors = [
                 "div[data-testid='tweetButtonInline']",
                 "div[data-testid='tweetButton']",
@@ -141,41 +160,41 @@ def run_once(headless=True):
                     continue
 
             if not sent:
-                print("[→] Fallback: Ctrl+Enter submit")
-                page.keyboard.down("Control")
-                page.keyboard.press("Enter")
-                page.keyboard.up("Control")
-                sent = True
+                # fallback - keyboard submit
+                try:
+                    print("[→] Fallback: Ctrl+Enter submit")
+                    page.keyboard.down("Control")
+                    page.keyboard.press("Enter")
+                    page.keyboard.up("Control")
+                    sent = True
+                except Exception as e:
+                    print(f"[❌] Keyboard fallback failed: {e}")
 
             if sent:
-                print("[✔] Reply submitted. Done.")
-                time.sleep(3)
+                print("[✔] Reply submitted. Waiting a few seconds...")
+                time.sleep(5)
+                print("[✔] Done (check tweet).")
+            else:
+                print("❌ Could not send reply. Screenshotting...")
+                page.screenshot(path="error_debug.png")
+                print("Saved error_debug.png")
+
+        except Exception as e:
+            print("❌ Exception during run:", e)
+            try:
+                page.screenshot(path="error_debug.png")
+                print("Saved error_debug.png")
+            except Exception:
+                pass
         finally:
-            context.close()
+            try:
+                context.close()
+            except Exception:
+                pass
             browser.close()
 
-
-def loop_runner():
-    while True:
-        try:
-            run_once(headless=True)
-        except Exception as e:
-            print(f"❌ Exception in runner: {e}")
-        time.sleep(30)  # check every 30s
-
-
-def heartbeat():
-    """Fake server so Render sees the service as alive"""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("0.0.0.0", PORT))
-    s.listen(1)
-    print(f"[💓] Heartbeat socket running on port {PORT}")
-    while True:
-        conn, addr = s.accept()
-        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nService alive")
-        conn.close()
-
-
 if __name__ == "__main__":
-    threading.Thread(target=loop_runner, daemon=True).start()
-    heartbeat()
+    # set HEADLESS=0 to run visible (for debugging)
+    headless_env = os.environ.get("HEADLESS", "1")
+    headless_flag = False if headless_env in ("0", "false", "False") else True
+    run_once(headless=headless_flag)
