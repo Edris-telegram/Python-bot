@@ -1,38 +1,44 @@
-# prototype_reply.py
+# dynamic_reply.py
 import time
 import os
 import json
+import threading
+from fastapi import FastAPI, Request
+import uvicorn
 from playwright.sync_api import sync_playwright
 
 # -------- CONFIG --------
-COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # can be raw auth_token, cookie string, or path to cookies.json
-TWEET_URL = "https://x.com/Maldris15559/status/1924175415939121331"
-FIXED_MESSAGE = "Prototype reply — testing ✅"
+COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # raw auth_token, cookie string, or path to cookies.json
+TASK_FILE = "task.json"
 # ------------------------
 
+app = FastAPI()
+lock = threading.Lock()
+
+def save_task(url, message):
+    with lock:
+        with open(TASK_FILE, "w") as f:
+            json.dump({"url": url, "message": message}, f)
+    print(f"[🆕] Task saved: {url} | {message}")
+
+def load_task():
+    if not os.path.exists(TASK_FILE):
+        return None
+    with lock:
+        with open(TASK_FILE, "r") as f:
+            try:
+                return json.load(f)
+            except:
+                return None
+
 def parse_cookie_input(cookie_input):
-    """
-    Accept:
-      - raw auth_token
-      - full cookie string "name=val; name2=val2"
-      - path to cookies.json
-    Returns list of cookie dicts suitable for context.add_cookies([...]).
-    """
     if not cookie_input:
         return []
 
-    # If looks like a file path
     if os.path.exists(cookie_input):
         with open(cookie_input, "r") as f:
-            try:
-                cookies = json.load(f)
-                print(f"[🍪] Loaded {len(cookies)} cookies from JSON file")
-                return cookies
-            except Exception as e:
-                print(f"[❌] Failed reading cookies.json: {e}")
-                return []
+            return json.load(f)
 
-    # If it’s a raw token
     if "=" not in cookie_input:
         return [{
             "name": "auth_token",
@@ -41,43 +47,30 @@ def parse_cookie_input(cookie_input):
             "path": "/"
         }]
 
-    # Otherwise parse string
     parts = [p.strip() for p in cookie_input.split(";") if p.strip()]
-    cookies = []
-    for p in parts:
-        if "=" in p:
-            name, val = p.split("=", 1)
-            cookies.append({
-                "name": name.strip(),
-                "value": val.strip(),
-                "domain": ".x.com",
-                "path": "/"
-            })
-    return cookies
+    return [{"name": name.strip(), "value": val.strip(), "domain": ".x.com", "path": "/"}
+            for name, val in (p.split("=", 1) for p in parts)]
 
 def try_selectors(page, selectors, timeout=5000):
-    """Wait for the first selector that appears."""
     for sel in selectors:
         try:
             handle = page.wait_for_selector(sel, timeout=timeout)
             if handle:
                 return sel
-        except Exception:
+        except:
             continue
     return None
 
-def run_once(headless=True):
+def run_once(tweet_url, message, headless=True):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
-        print("ERROR: No cookie found. Set TW_COOKIE env var (auth_token, cookie string, or cookies.json path).")
+        print("ERROR: No cookie found. Set TW_COOKIE env var.")
         return
 
     cookies = parse_cookie_input(cookie_str)
     if not cookies:
         print("ERROR: Failed to parse cookie input.")
         return
-
-    print("Starting Playwright... (first run may download Chromium)")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -88,30 +81,24 @@ def run_once(headless=True):
         try:
             context.add_cookies(cookies)
             print("[🍪] Cookies applied")
-
             page = context.new_page()
 
-            # Visit home to apply cookies
             print("[→] Visiting home...")
             page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
-            # Open the tweet page
-            print(f"[→] Opening tweet: {TWEET_URL}")
-            page.goto(TWEET_URL, wait_until="domcontentloaded", timeout=60000)
+            print(f"[→] Opening tweet: {tweet_url}")
+            page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
             time.sleep(2)
 
-            # Try common textbox selectors
             textbox_selectors = [
                 "div[aria-label='Tweet text']",
                 "div[role='textbox'][contenteditable='true']",
                 "div[aria-label='Reply'] div[role='textbox']",
                 "div[data-testid='tweetTextarea_0']",
             ]
-
             sel = try_selectors(page, textbox_selectors, timeout=7000)
 
-            # If no textbox, attempt to click reply button
             if not sel:
                 reply_buttons = [
                     "div[data-testid='reply']",
@@ -120,81 +107,71 @@ def run_once(headless=True):
                 ]
                 rb = try_selectors(page, reply_buttons, timeout=5000)
                 if rb:
-                    try:
-                        print(f"[→] Clicking reply button ({rb})...")
-                        page.click(rb)
-                        time.sleep(1.5)
-                        sel = try_selectors(page, textbox_selectors, timeout=7000)
-                    except Exception as e:
-                        print(f"[⚠️] Failed clicking reply button: {e}")
+                    page.click(rb)
+                    time.sleep(1.5)
+                    sel = try_selectors(page, textbox_selectors, timeout=7000)
 
             if not sel:
-                print("⚠️ Reply textbox not found — likely cookie issue.")
+                print("⚠️ Reply textbox not found. Saved debug screenshot.")
                 page.screenshot(path="debug_tweet.png")
-                print("Saved debug_tweet.png")
                 return
 
-            print(f"[→] Using textbox selector: {sel}")
             page.click(sel)
             time.sleep(0.3)
-            page.fill(sel, FIXED_MESSAGE)
+            page.fill(sel, message)
             time.sleep(0.4)
 
-            # Try send button selectors
             send_selectors = [
                 "div[data-testid='tweetButtonInline']",
                 "div[data-testid='tweetButton']",
                 "div[data-testid='replyButton']",
                 "div[role='button'][data-testid='tweetButton']",
             ]
-            sent = False
             for s in send_selectors:
                 try:
                     btn = page.wait_for_selector(s, timeout=5000)
                     if btn:
-                        print(f"[→] Clicking send button ({s})")
                         btn.click()
-                        sent = True
-                        break
-                except Exception:
+                        print("[✔] Reply submitted.")
+                        time.sleep(5)
+                        return
+                except:
                     continue
 
-            if not sent:
-                # fallback - keyboard submit
-                try:
-                    print("[→] Fallback: Ctrl+Enter submit")
-                    page.keyboard.down("Control")
-                    page.keyboard.press("Enter")
-                    page.keyboard.up("Control")
-                    sent = True
-                except Exception as e:
-                    print(f"[❌] Keyboard fallback failed: {e}")
+            print("❌ Could not send reply, screenshotting...")
+            page.screenshot(path="error_debug.png")
 
-            if sent:
-                print("[✔] Reply submitted. Waiting a few seconds...")
-                time.sleep(5)
-                print("[✔] Done (check tweet).")
-            else:
-                print("❌ Could not send reply. Screenshotting...")
-                page.screenshot(path="error_debug.png")
-                print("Saved error_debug.png")
-
-        except Exception as e:
-            print("❌ Exception during run:", e)
-            try:
-                page.screenshot(path="error_debug.png")
-                print("Saved error_debug.png")
-            except Exception:
-                pass
         finally:
             try:
                 context.close()
-            except Exception:
+            except:
                 pass
             browser.close()
 
+def worker_loop():
+    while True:
+        task = load_task()
+        if task:
+            url, msg = task.get("url"), task.get("message")
+            if url and msg:
+                print(f"[▶] Running task: {url} | {msg}")
+                run_once(url, msg)
+                os.remove(TASK_FILE)  # clear after run
+        time.sleep(10)
+
+@app.post("/new-task")
+async def new_task(req: Request):
+    data = await req.json()
+    url = data.get("url")
+    msg = data.get("message")
+    if not url or not msg:
+        return {"status": "error", "reason": "url and message required"}
+    save_task(url, msg)
+    return {"status": "ok", "url": url, "message": msg}
+
 if __name__ == "__main__":
-    # set HEADLESS=0 to run visible (for debugging)
-    headless_env = os.environ.get("HEADLESS", "1")
-    headless_flag = False if headless_env in ("0", "false", "False") else True
-    run_once(headless=headless_flag)
+    # Start worker in background
+    t = threading.Thread(target=worker_loop, daemon=True)
+    t.start()
+    # Run FastAPI app
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
