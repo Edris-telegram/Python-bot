@@ -31,10 +31,11 @@ TWEET_RE = re.compile(
     re.IGNORECASE
 )
 
-# ------------------ TWITTER CONFIG ------------------
 COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # set as env var
-# ----------------------------------------------------
 
+PROCESSED_TWEETS = set()  # Prevent double replies
+
+# ------------------ UTILITY FUNCTIONS ------------------
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
 
@@ -57,29 +58,25 @@ def extract_tweet(text):
         return None, None
     m = TWEET_RE.search(text)
     if m:
-        return m.group(1), m.group(2)  # url, id
+        return m.group(1), m.group(2)
     return None, None
 
 def get_random_message(file_path="messages.txt"):
     if not os.path.exists(file_path):
-        print(f"[⚠️] {file_path} not found. Using default trial replies.", flush=True)
         return random.choice(TRIAL_REPLIES)
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
-        if not lines:
-            return random.choice(TRIAL_REPLIES)
-        return random.choice(lines)
-    except Exception as e:
-        print(f"[⚠️] Error reading {file_path}: {e}", flush=True)
+        return random.choice(lines) if lines else random.choice(TRIAL_REPLIES)
+    except Exception:
         return random.choice(TRIAL_REPLIES)
 
+# ------------------ TELEGRAM CLIENT ------------------
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 async def click_inline_button(client, message, match_texts=("👊",)):
     buttons = getattr(message, "buttons", None) or getattr(message, "reply_markup", None)
     if not buttons:
-        print("[🔘] No inline buttons found", flush=True)
         return {"clicked": False, "reason": "no_buttons"}
 
     for row in buttons:
@@ -87,7 +84,6 @@ async def click_inline_button(client, message, match_texts=("👊",)):
             lbl = getattr(btn, "text", "") or ""
             if any(mt.lower() in lbl.lower() for mt in match_texts):
                 try:
-                    print(f"[🔘] Clicking button: {lbl}", flush=True)
                     res = await client(functions.messages.GetBotCallbackAnswerRequest(
                         peer=message.to_id,
                         msg_id=message.id,
@@ -98,15 +94,14 @@ async def click_inline_button(client, message, match_texts=("👊",)):
                     return {"clicked": False, "button_text": lbl, "error": repr(e)}
     return {"clicked": False, "reason": "no_matching_label"}
 
-# ------------------ TWITTER REPLY FUNCTION (ASYNC) ------------------
+# ------------------ TWITTER REPLY ------------------
 def parse_cookie_input(cookie_input):
     if not cookie_input:
         return []
     if os.path.exists(cookie_input):
         with open(cookie_input, "r") as f:
             try:
-                cookies = json.load(f)
-                return cookies
+                return json.load(f)
             except Exception:
                 return []
     if "=" not in cookie_input:
@@ -116,9 +111,8 @@ def parse_cookie_input(cookie_input):
             "domain": ".x.com",
             "path": "/"
         }]
-    parts = [p.strip() for p in cookie_input.split(";") if p.strip()]
     cookies = []
-    for p in parts:
+    for p in cookie_input.split(";"):
         if "=" in p:
             name, val = p.split("=", 1)
             cookies.append({
@@ -139,11 +133,7 @@ async def try_selectors(page, selectors, timeout=5000):
             continue
     return None
 
-async def reply_to_tweet(tweet_url, message, headless=True, retries=3):
-    if not tweet_url:
-        print("⚠️ No valid tweet URL. Skipping reply.", flush=True)
-        return
-
+async def reply_to_tweet(tweet_url, message, headless=True, tweet_id=None):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
         print("ERROR: No cookie found. Set TW_COOKIE env var.", flush=True)
@@ -153,60 +143,61 @@ async def reply_to_tweet(tweet_url, message, headless=True, retries=3):
         print("ERROR: Failed to parse cookie input.", flush=True)
         return
 
-    attempt = 0
-    while attempt < retries:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        context = await browser.new_context()
         try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
-                context = await browser.new_context()
-                await context.add_cookies(cookies)
-                page = await context.new_page()
-                await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(2)
-                await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(2)
+            await context.add_cookies(cookies)
+            page = await context.new_page()
+            await page.goto("https://x.com/home", wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(2)
+            await page.goto(tweet_url, wait_until="networkidle", timeout=60000)
+            await asyncio.sleep(2)
 
-                textbox_selectors = [
-                    "div[aria-label='Tweet text']",
-                    "div[role='textbox'][contenteditable='true']",
-                    "div[aria-label='Reply'] div[role='textbox']",
-                    "div[data-testid='tweetTextarea_0']",
-                ]
-                sel = await try_selectors(page, textbox_selectors, timeout=7000)
-                if not sel:
-                    raise Exception("Could not find textbox selector")
+            textbox_selectors = [
+                "div[aria-label='Tweet text']",
+                "div[role='textbox'][contenteditable='true']",
+                "div[aria-label='Reply'] div[role='textbox']",
+                "div[data-testid='tweetTextarea_0']",
+            ]
+            sel = await try_selectors(page, textbox_selectors, timeout=7000)
+            if not sel:
+                print("❌ Could not find textbox selector.", flush=True)
+                if tweet_id:
+                    await page.screenshot(path=f"screenshots/fail_{tweet_id}.png", full_page=True)
+                return
+            await page.click(sel)
+            await page.fill(sel, message)
+            await asyncio.sleep(0.5)
 
-                await page.click(sel)
-                await page.fill(sel, message)
-                await asyncio.sleep(0.5)
-
-                send_selectors = [
-                    "div[data-testid='tweetButtonInline']",
-                    "div[data-testid='tweetButton']",
-                    "div[data-testid='replyButton']",
-                    "div[role='button'][data-testid='tweetButton']",
-                    "div[aria-label='Tweet']",
-                    "div[aria-label='Reply']",
-                    "div[role='button'][data-focusable='true']",
-                ]
+            send_selectors = [
+                "div[data-testid='tweetButtonInline']",
+                "div[data-testid='tweetButton']",
+                "div[data-testid='replyButton']",
+                "div[role='button'][data-testid='tweetButton']",
+            ]
+            max_retries = 3
+            for attempt in range(max_retries):
                 btn_sel = await try_selectors(page, send_selectors, timeout=5000)
                 if btn_sel:
-                    btn = await page.query_selector(btn_sel)
-                    await btn.scroll_into_view_if_needed()
-                    await asyncio.sleep(0.5)
-                    await btn.click()
+                    await page.click(btn_sel)
                     await asyncio.sleep(3)
                     print("✅ Tweet posted!", flush=True)
-                    await context.close()
-                    await browser.close()
                     return
                 else:
-                    raise Exception("Could not find/send tweet button")
+                    print(f"⚠️ Retry {attempt+1} failed: Could not find/send tweet button, trying again...", flush=True)
+                    await asyncio.sleep(2)
+            if tweet_id:
+                await page.screenshot(path=f"screenshots/fail_{tweet_id}.png", full_page=True)
+            print("❌ Could not find/send tweet button after retries.", flush=True)
         except Exception as e:
-            attempt += 1
-            print(f"⚠️ Retry {attempt} failed: {e}, trying again...", flush=True)
-            await asyncio.sleep(2)
-    print("❌ Could not find/send tweet button after retries.", flush=True)
+            print("❌ Exception during reply:", e, flush=True)
+        finally:
+            try:
+                await context.close()
+            except Exception:
+                pass
+            await browser.close()
 
 # ------------------ FASTAPI DUMMY SERVER ------------------
 app = FastAPI()
@@ -227,14 +218,16 @@ async def handler(event):
             return
 
         tweet_url, tweet_id = extract_tweet(msg.text or "")
-        print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}", flush=True)
+        if not tweet_id or tweet_id in PROCESSED_TWEETS:
+            return
+        PROCESSED_TWEETS.add(tweet_id)
 
+        print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}", flush=True)
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
         message_to_send = get_random_message()
 
-        # Call Twitter reply using async
         print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}", flush=True)
-        await reply_to_tweet(tweet_url, message_to_send)
+        await reply_to_tweet(tweet_url, message_to_send, headless=True, tweet_id=tweet_id)
 
         entry = {
             "time": now_iso(),
@@ -252,12 +245,10 @@ async def handler(event):
 # ------------------ MAIN ------------------
 async def main():
     print("🚀 Starting raid_auto_with_reply...", flush=True)
-    # Start FastAPI server in background
     config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), log_level="info")
     server = uvicorn.Server(config)
     asyncio.create_task(server.serve())
 
-    # Start Telegram client
     await client.start()
     print("✅ Connected to Telegram. Waiting for raids...", flush=True)
     await client.run_until_disconnected()
