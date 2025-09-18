@@ -180,10 +180,19 @@ def loop_runner():
             print(f"❌ Exception in runner: {e}")
         time.sleep(30)  # check every 30s
 
+# --- Heartbeat thread to keep Render detecting logs ---
+def heartbeat():
+    while True:
+        print("[💓] Service alive and running...")
+        time.sleep(30)
+
 if __name__ == "__main__":
     # Start raid runner in background thread
     threading.Thread(target=loop_runner, daemon=True).start()
+    
+    # Start heartbeat thread
+    threading.Thread(target=heartbeat, daemon=True).start()
 
     # Listen on the Render-assigned port
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ["PORT"])
     uvicorn.run(app, host="0.0.0.0", port=port)
