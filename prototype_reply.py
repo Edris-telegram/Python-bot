@@ -3,13 +3,12 @@ import re
 import json
 import os
 import random
-import time
+import asyncio
 from datetime import datetime
 from telethon import TelegramClient, events, functions
-from playwright.sync_api import sync_playwright
 from fastapi import FastAPI
-import asyncio
 import uvicorn
+from playwright.async_api import async_playwright
 
 # ------------------ TELEGRAM CONFIG ------------------
 API_ID = 27403368
@@ -99,7 +98,7 @@ async def click_inline_button(client, message, match_texts=("👊",)):
                     return {"clicked": False, "button_text": lbl, "error": repr(e)}
     return {"clicked": False, "reason": "no_matching_label"}
 
-# ------------------ TWITTER REPLY FUNCTION ------------------
+# ------------------ TWITTER REPLY FUNCTION (ASYNC) ------------------
 def parse_cookie_input(cookie_input):
     if not cookie_input:
         return []
@@ -130,17 +129,17 @@ def parse_cookie_input(cookie_input):
             })
     return cookies
 
-def try_selectors(page, selectors, timeout=5000):
+async def try_selectors(page, selectors, timeout=5000):
     for sel in selectors:
         try:
-            handle = page.wait_for_selector(sel, timeout=timeout)
+            handle = await page.wait_for_selector(sel, timeout=timeout)
             if handle:
                 return sel
         except Exception:
             continue
     return None
 
-def reply_to_tweet(tweet_url, message, headless=True):
+async def reply_to_tweet(tweet_url, message, headless=True):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
         print("ERROR: No cookie found. Set TW_COOKIE env var.", flush=True)
@@ -150,16 +149,16 @@ def reply_to_tweet(tweet_url, message, headless=True):
         print("ERROR: Failed to parse cookie input.", flush=True)
         return
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        context = browser.new_context()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        context = await browser.new_context()
         try:
-            context.add_cookies(cookies)
-            page = context.new_page()
-            page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(2)
-            page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-            time.sleep(2)
+            await context.add_cookies(cookies)
+            page = await context.new_page()
+            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(2)
+            await page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(2)
 
             textbox_selectors = [
                 "div[aria-label='Tweet text']",
@@ -167,13 +166,13 @@ def reply_to_tweet(tweet_url, message, headless=True):
                 "div[aria-label='Reply'] div[role='textbox']",
                 "div[data-testid='tweetTextarea_0']",
             ]
-            sel = try_selectors(page, textbox_selectors, timeout=7000)
+            sel = await try_selectors(page, textbox_selectors, timeout=7000)
             if not sel:
+                print("❌ Could not find textbox selector.", flush=True)
                 return
-            page.click(sel)
-            time.sleep(0.3)
-            page.fill(sel, message)
-            time.sleep(0.4)
+            await page.click(sel)
+            await page.fill(sel, message)
+            await asyncio.sleep(0.5)
 
             send_selectors = [
                 "div[data-testid='tweetButtonInline']",
@@ -181,23 +180,22 @@ def reply_to_tweet(tweet_url, message, headless=True):
                 "div[data-testid='replyButton']",
                 "div[role='button'][data-testid='tweetButton']",
             ]
-            for s in send_selectors:
-                try:
-                    btn = page.wait_for_selector(s, timeout=5000)
-                    if btn:
-                        btn.click()
-                        time.sleep(5)
-                        return
-                except Exception:
-                    continue
+            btn_sel = await try_selectors(page, send_selectors, timeout=5000)
+            if btn_sel:
+                await page.click(btn_sel)
+                await asyncio.sleep(3)
+                print("✅ Tweet posted!", flush=True)
+            else:
+                print("❌ Could not find send button.", flush=True)
+
         except Exception as e:
             print("❌ Exception during reply:", e, flush=True)
         finally:
             try:
-                context.close()
+                await context.close()
             except Exception:
                 pass
-            browser.close()
+            await browser.close()
 
 # ------------------ FASTAPI DUMMY SERVER ------------------
 app = FastAPI()
@@ -223,9 +221,9 @@ async def handler(event):
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
         message_to_send = get_random_message()
 
-        # Call Twitter reply in a separate thread to avoid async conflict
+        # Call Twitter reply using async
         print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}", flush=True)
-        await asyncio.to_thread(reply_to_tweet, tweet_url, message_to_send)
+        await reply_to_tweet(tweet_url, message_to_send)
 
         entry = {
             "time": now_iso(),
