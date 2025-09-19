@@ -2,9 +2,9 @@ import os
 import json
 import asyncio
 import logging
+import threading
 from fastapi import FastAPI, Request
 import uvicorn
-
 from playwright.async_api import async_playwright
 
 # ---------------- CONFIG ----------------
@@ -65,7 +65,6 @@ async def send_reply(tweet_url: str, reply_message: str):
 
 
 # ----------- API ENDPOINTS -----------
-
 @app.get("/")
 def health():
     return {"status": "ok", "message": "Twitter bot is running with cookies"}
@@ -85,7 +84,24 @@ async def do_tweet(request: Request):
     return {"status": "ok", "tweet": tweet_url, "reply": reply_message}
 
 
+# ----------- BACKGROUND KEEP-ALIVE LOOP -----------
+async def keep_alive():
+    while True:
+        logging.info("⏳ Bot is alive and waiting for tasks...")
+        await asyncio.sleep(60)  # ping every 1 minute
+
+
+def start_background_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(keep_alive())
+    loop.run_forever()
+
+
 # ----------- ENTRY POINT -----------
 if __name__ == "__main__":
+    # Start keep-alive loop in background thread
+    threading.Thread(target=start_background_loop, daemon=True).start()
+
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
