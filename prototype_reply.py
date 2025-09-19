@@ -1,9 +1,7 @@
-# prototype_reply_from_github.py
+# prototype_reply_from_file.py
 import time
 import os
 import json
-import requests
-import base64
 from playwright.sync_api import sync_playwright
 from fastapi import FastAPI
 import threading
@@ -11,24 +9,15 @@ import uvicorn
 
 # -------- CONFIG --------
 COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # raw auth_token, cookie string, or cookies.json path
-
-GITHUB_REPO = "Edris-telegram/Python-bot"  # same repo as telegram script
-GITHUB_FILE_PATH = "raid_messages.txt"
-GITHUB_BRANCH = "main"
-# Public repo, no token needed
+RAID_FILE = "raid_messages.txt"  # file created by Telegram bot
 # ------------------------
 
 def fetch_latest_raid_message():
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}?ref={GITHUB_BRANCH}"
-    headers = {"Accept": "application/vnd.github.v3+json"}  # public repo, no auth
-
-    resp = requests.get(url, headers=headers)
-    if resp.status_code != 200:
-        print(f"[❌] Failed to fetch file from GitHub: {resp.text}")
+    if not os.path.exists(RAID_FILE):
+        print(f"[❌] {RAID_FILE} not found!")
         return None, None
-
-    data = resp.json()
-    content = base64.b64decode(data["content"]).decode("utf-8").strip()
+    with open(RAID_FILE, "r", encoding="utf-8") as f:
+        content = f.read().strip()
     if "\n" in content:
         tweet_url, message = content.split("\n", 1)
     else:
@@ -88,7 +77,7 @@ def run_once(headless=True):
 
     tweet_url, message_to_send = fetch_latest_raid_message()
     if not tweet_url or not message_to_send:
-        print("[❌] No tweet URL or message fetched from GitHub")
+        print("[❌] No tweet URL or message fetched from file")
         return
 
     print(f"[→] Will reply to: {tweet_url} with message: {message_to_send}")
