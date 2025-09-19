@@ -1,16 +1,39 @@
-# prototype_reply_async.py
-import asyncio
+# prototype_reply_from_github.py
+import time
 import os
 import json
-from playwright.async_api import async_playwright
+import requests
+import base64
+from playwright.sync_api import sync_playwright
 from fastapi import FastAPI
+import threading
 import uvicorn
 
 # -------- CONFIG --------
-COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")
-TWEET_URL = "https://x.com/Maldris15559/status/1968948525204472309"
-FIXED_MESSAGE = "Prototype reply — testing ✅"
+COOKIE_AUTH_TOKEN = os.environ.get("TW_COOKIE")  # raw auth_token, cookie string, or cookies.json path
+
+GITHUB_REPO = "Edris-telegram/Python-bot"  # same repo as telegram script
+GITHUB_FILE_PATH = "raid_messages.txt"
+GITHUB_BRANCH = "main"
+# Public repo, no token needed
 # ------------------------
+
+def fetch_latest_raid_message():
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}?ref={GITHUB_BRANCH}"
+    headers = {"Accept": "application/vnd.github.v3+json"}  # public repo, no auth
+
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        print(f"[❌] Failed to fetch file from GitHub: {resp.text}")
+        return None, None
+
+    data = resp.json()
+    content = base64.b64decode(data["content"]).decode("utf-8").strip()
+    if "\n" in content:
+        tweet_url, message = content.split("\n", 1)
+    else:
+        tweet_url, message = content, "Automated reply"
+    return tweet_url.strip(), message.strip()
 
 def parse_cookie_input(cookie_input):
     if not cookie_input:
@@ -47,49 +70,52 @@ def parse_cookie_input(cookie_input):
             })
     return cookies
 
-async def try_selectors(page, selectors, timeout=5000):
+def try_selectors(page, selectors, timeout=5000):
     for sel in selectors:
         try:
-            handle = await page.wait_for_selector(sel, timeout=timeout)
+            handle = page.wait_for_selector(sel, timeout=timeout)
             if handle:
                 return sel
         except Exception:
             continue
     return None
 
-async def run_once(headless=True):
+def run_once(headless=True):
     cookie_str = COOKIE_AUTH_TOKEN
     if not cookie_str:
         print("ERROR: No cookie found. Set TW_COOKIE env var.")
         return
+
+    tweet_url, message_to_send = fetch_latest_raid_message()
+    if not tweet_url or not message_to_send:
+        print("[❌] No tweet URL or message fetched from GitHub")
+        return
+
+    print(f"[→] Will reply to: {tweet_url} with message: {message_to_send}")
 
     cookies = parse_cookie_input(cookie_str)
     if not cookies:
         print("ERROR: Failed to parse cookie input.")
         return
 
-    print("Starting Playwright (async)...")
+    print("Starting Playwright... (first run may download Chromium)")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
             headless=headless,
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
-        context = await browser.new_context()
-
+        context = browser.new_context()
         try:
-            await context.add_cookies(cookies)
+            context.add_cookies(cookies)
             print("[🍪] Cookies applied")
 
-            page = await context.new_page()
+            page = context.new_page()
+            page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
+            time.sleep(2)
 
-            print("[→] Visiting home...")
-            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(2)
-
-            print(f"[→] Opening tweet: {TWEET_URL}")
-            await page.goto(TWEET_URL, wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(2)
+            page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(2)
 
             textbox_selectors = [
                 "div[aria-label='Tweet text']",
@@ -98,7 +124,7 @@ async def run_once(headless=True):
                 "div[data-testid='tweetTextarea_0']",
             ]
 
-            sel = await try_selectors(page, textbox_selectors, timeout=7000)
+            sel = try_selectors(page, textbox_selectors, timeout=7000)
 
             if not sel:
                 reply_buttons = [
@@ -106,27 +132,27 @@ async def run_once(headless=True):
                     "div[role='button'][data-testid='reply']",
                     "a[href$='/reply']",
                 ]
-                rb = await try_selectors(page, reply_buttons, timeout=5000)
+                rb = try_selectors(page, reply_buttons, timeout=5000)
                 if rb:
                     try:
                         print(f"[→] Clicking reply button ({rb})...")
-                        await page.click(rb)
-                        await asyncio.sleep(1.5)
-                        sel = await try_selectors(page, textbox_selectors, timeout=7000)
+                        page.click(rb)
+                        time.sleep(1.5)
+                        sel = try_selectors(page, textbox_selectors, timeout=7000)
                     except Exception as e:
                         print(f"[⚠️] Failed clicking reply button: {e}")
 
             if not sel:
                 print("⚠️ Reply textbox not found — likely cookie issue.")
-                await page.screenshot(path="debug_tweet.png")
+                page.screenshot(path="debug_tweet.png")
                 print("Saved debug_tweet.png")
                 return
 
             print(f"[→] Using textbox selector: {sel}")
-            await page.click(sel)
-            await asyncio.sleep(0.3)
-            await page.fill(sel, FIXED_MESSAGE)
-            await asyncio.sleep(0.4)
+            page.click(sel)
+            time.sleep(0.3)
+            page.fill(sel, message_to_send)
+            time.sleep(0.4)
 
             send_selectors = [
                 "div[data-testid='tweetButtonInline']",
@@ -137,10 +163,10 @@ async def run_once(headless=True):
             sent = False
             for s in send_selectors:
                 try:
-                    btn = await page.wait_for_selector(s, timeout=5000)
+                    btn = page.wait_for_selector(s, timeout=5000)
                     if btn:
                         print(f"[→] Clicking send button ({s})")
-                        await btn.click()
+                        btn.click()
                         sent = True
                         break
                 except Exception:
@@ -149,51 +175,49 @@ async def run_once(headless=True):
             if not sent:
                 try:
                     print("[→] Fallback: Ctrl+Enter submit")
-                    await page.keyboard.down("Control")
-                    await page.keyboard.press("Enter")
-                    await page.keyboard.up("Control")
+                    page.keyboard.down("Control")
+                    page.keyboard.press("Enter")
+                    page.keyboard.up("Control")
                     sent = True
                 except Exception as e:
                     print(f"[❌] Keyboard fallback failed: {e}")
 
             if sent:
                 print("[✔] Reply submitted. Waiting a few seconds...")
-                await asyncio.sleep(5)
+                time.sleep(5)
                 print("[✔] Done (check tweet).")
             else:
                 print("❌ Could not send reply. Screenshotting...")
-                await page.screenshot(path="error_debug.png")
+                page.screenshot(path="error_debug.png")
                 print("Saved error_debug.png")
 
         except Exception as e:
             print("❌ Exception during run:", e)
             try:
-                await page.screenshot(path="error_debug.png")
+                page.screenshot(path="error_debug.png")
                 print("Saved error_debug.png")
             except Exception:
                 pass
         finally:
             try:
-                await context.close()
+                context.close()
             except Exception:
                 pass
-            await browser.close()
+            browser.close()
 
-# -------- FastAPI Server --------
+# -------- Dummy FastAPI Server --------
 app = FastAPI()
 
 @app.get("/")
 async def root():
     return {"status": "alive", "message": "Render service is up!"}
 
-@app.get("/run")
-async def run_reply():
-    """Trigger the Playwright reply job"""
-    headless_flag = os.environ.get("HEADLESS", "1") not in ("0", "false", "False")
-    asyncio.create_task(run_once(headless=headless_flag))
-    return {"status": "started", "message": "Reply job triggered"}
+def start_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 # -------- Main --------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    threading.Thread(target=start_dummy_server, daemon=True).start()
+    headless_flag = os.environ.get("HEADLESS", "1") not in ("0", "false", "False")
+    run_once(headless=headless_flag)
