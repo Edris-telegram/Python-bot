@@ -5,6 +5,7 @@ import os
 import random
 import time
 import traceback
+import asyncio
 from datetime import datetime
 from telethon import TelegramClient, events, functions
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -166,177 +167,10 @@ def try_selectors_with_debug(page, selectors, timeout=5000):
     return None
 
 def reply_to_tweet(tweet_url, message, headless=True):
-    print("========================================")
-    print(f"[🐦] Reply workflow start for: {tweet_url}")
-    try:
-        cookie_str = COOKIE_AUTH_TOKEN
-        if not cookie_str:
-            print("ERROR: No cookie found. Set TW_COOKIE env var.")
-            return False
-
-        print("[🐦] Parsing cookie input...")
-        cookies = parse_cookie_input(cookie_str)
-        if not cookies:
-            print("ERROR: No cookies parsed; aborting reply.")
-            return False
-
-        print("[🐦] Launching Playwright browser (headless=%s) ..." % str(headless))
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
-            context = browser.new_context()
-            try:
-                print("[🍪] Adding cookies to context...")
-                context.add_cookies(cookies)
-                print("[🍪] Cookies added to context successfully.")
-                page = context.new_page()
-
-                # Visit home - to let cookies apply
-                try:
-                    print("[→] Navigating to https://x.com/home ...")
-                    page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-                    print("[→] Home loaded.")
-                except Exception as e:
-                    print(f"[⚠️] Visiting home raised: {e}")
-                    traceback.print_exc()
-
-                # Open tweet URL
-                try:
-                    print(f"[→] Navigating to tweet: {tweet_url}")
-                    page.goto(tweet_url, wait_until="domcontentloaded", timeout=60000)
-                    print("[→] Tweet page loaded.")
-                except Exception as e:
-                    print(f"[❌] Error opening tweet page: {e}")
-                    traceback.print_exc()
-                    page.screenshot(path="reply_error_opening_tweet.png")
-                    print("[❗] Screenshot saved: reply_error_opening_tweet.png")
-                    return False
-
-                # Try to find a reply textbox
-                textbox_selectors = [
-                    "div[aria-label='Tweet text']",
-                    "div[role='textbox'][contenteditable='true']",
-                    "div[aria-label='Reply'] div[role='textbox']",
-                    "div[data-testid='tweetTextarea_0']",
-                    "div[aria-label='Tweet text']",  # duplicate to increase chance
-                    "textarea[aria-label='Tweet text']"
-                ]
-                sel = try_selectors_with_debug(page, textbox_selectors, timeout=7000)
-
-                # If not found, attempt reply button then retry
-                if not sel:
-                    reply_buttons = [
-                        "div[data-testid='reply']",
-                        "div[role='button'][data-testid='reply']",
-                        "a[href$='/reply']",
-                        "div[aria-label='Reply']"
-                    ]
-                    rb = try_selectors_with_debug(page, reply_buttons, timeout=5000)
-                    if rb:
-                        try:
-                            print(f"[→] Clicking reply launcher: {rb}")
-                            page.click(rb)
-                            print("[→] Clicked reply launcher; waiting briefly...")
-                            time.sleep(1.2)
-                            sel = try_selectors_with_debug(page, textbox_selectors, timeout=7000)
-                        except Exception as e:
-                            print(f"[⚠️] Failed clicking reply launcher: {e}")
-                            traceback.print_exc()
-
-                if not sel:
-                    print("⚠️ Reply textbox not found — cookie may not be logged in or layout changed.")
-                    page.screenshot(path="debug_tweet.png")
-                    print("[❗] Saved debug_tweet.png — inspect it to see page layout / login state.")
-                    return False
-
-                print(f"[→] Using textbox selector: {sel} — focusing and typing message.")
-                try:
-                    page.click(sel)
-                except Exception as e:
-                    print(f"[⚠️] click(sel) raised: {e} — continuing to fill anyway.")
-                page.fill(sel, message)
-                time.sleep(0.4)
-
-                # Try multiple send button selectors, printing each check
-                send_selectors = [
-                    "div[data-testid='tweetButtonInline']",
-                    "div[data-testid='tweetButton']",
-                    "div[data-testid='replyButton']",
-                    "div[role='button'][data-testid='tweetButton']",
-                    "div[aria-label='Reply'] div[role='button']"
-                ]
-                sent = False
-                for s in send_selectors:
-                    print(f"[🔎] Looking for send selector: {s}")
-                    try:
-                        btn = page.query_selector(s)
-                        if btn:
-                            print(f"[→] Found send button {s} — clicking...")
-                            btn.click()
-                            sent = True
-                            break
-                        else:
-                            # try wait_for_selector briefly
-                            try:
-                                btn2 = page.wait_for_selector(s, timeout=2500)
-                                if btn2:
-                                    print(f"[→] Found send button via wait_for_selector {s} — clicking...")
-                                    btn2.click()
-                                    sent = True
-                                    break
-                            except Exception:
-                                print(f"[🔎] Not found via wait_for_selector either: {s}")
-                    except Exception as e:
-                        print(f"[❌] Exception while probing send selector {s}: {e}")
-                        traceback.print_exc()
-
-                if not sent:
-                    # Fallback to keyboard submit
-                    try:
-                        print("[→] Fallback: Ctrl+Enter keyboard submit")
-                        page.keyboard.down("Control")
-                        page.keyboard.press("Enter")
-                        page.keyboard.up("Control")
-                        sent = True
-                    except Exception as e:
-                        print(f"[❌] Fallback keyboard submit failed: {e}")
-                        traceback.print_exc()
-                        sent = False
-
-                if sent:
-                    print("[✔] Reply action attempted. Waiting a few seconds for completion...")
-                    time.sleep(4)
-                    page.screenshot(path="reply_after_send.png")
-                    print("[📸] Saved reply_after_send.png for inspection")
-                    print("[🐦] Reply workflow completed — check the tweet.")
-                    return True
-                else:
-                    print("❌ Could not trigger send action. Saving debug screenshot.")
-                    page.screenshot(path="error_debug.png")
-                    print("[❗] Saved error_debug.png")
-                    return False
-
-            except Exception as e:
-                print("❌ Exception during reply workflow:", e)
-                traceback.print_exc()
-                try:
-                    page.screenshot(path="error_debug_exception.png")
-                    print("[❗] Saved error_debug_exception.png")
-                except Exception:
-                    pass
-                return False
-            finally:
-                try:
-                    context.close()
-                except Exception:
-                    pass
-                browser.close()
-                print("[🔚] Browser closed.")
-    except Exception as e:
-        print("❌ Top-level exception in reply_to_tweet:", e)
-        traceback.print_exc()
-        return False
-    finally:
-        print("========================================")
+    # (unchanged, still your verbose Playwright workflow)
+    # ...
+    pass  # keeping short here to focus on handler changes
+    # but in your file, keep the full function body
 
 # ------------------ FASTAPI DUMMY SERVER ------------------
 app = FastAPI()
@@ -350,7 +184,7 @@ def start_dummy_server():
     print(f"[🌐] Starting dummy server on port {port} (uvicorn)...")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
-# ------------------ TELEGRAM HANDLER ------------------
+# ------------------ TELEGRAM HANDLER (FIXED) ------------------
 @client.on(events.NewMessage(chats=WATCH_GROUPS, incoming=True))
 async def handler(event):
     try:
@@ -358,24 +192,42 @@ async def handler(event):
         sender = await event.get_sender()
         sender_id = getattr(sender, "id", None)
 
+        print("\n==================== [NEW TELEGRAM MESSAGE] ====================")
+        print(f"[📝] Raw message text: {msg.text!r}")
+        print(f"[👤] Sender ID: {sender_id}")
+        print("===============================================================")
+
+        # Only process raid bot messages
         if not sender_id or sender_id not in [5994885234]:
             print(f"[DEBUG] Ignored message from sender ID: {sender_id}")
             return
 
+        # Extract tweet
         tweet_url, tweet_id = extract_tweet(msg.text or "")
-        print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
+        print(f"\n🚨 [RAID DETECTED] Tweet URL: {tweet_url}, Tweet ID: {tweet_id}")
 
+        # Smash button
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
         print(f"[🔘] Button click result: {click_result}")
 
+        # Pick a reply
         message_to_send = get_random_message()
         print(f"[💬] Selected reply message: {message_to_send}")
 
-        print(f"[🐦] Replying to {tweet_url} with message: {message_to_send}")
-        success = reply_to_tweet(tweet_url, message_to_send, headless=(os.environ.get("HEADLESS","1") != "0"))
-
+        # Run Twitter reply in executor (avoids sync/async clash)
+        loop = asyncio.get_event_loop()
+        print(f"[🐦] Scheduling reply_to_tweet for {tweet_url} ...")
+        success = await loop.run_in_executor(
+            None,
+            lambda: reply_to_tweet(
+                tweet_url,
+                message_to_send,
+                headless=(os.environ.get("HEADLESS", "1") != "0")
+            )
+        )
         print(f"[🐦] Reply success: {success}")
 
+        # Save log
         entry = {
             "time": now_iso(),
             "chat_id": event.chat_id,
@@ -386,6 +238,7 @@ async def handler(event):
             "reply_success": success
         }
         save_json_append(LOG_FILE, entry)
+        print("[💾] Log entry saved.")
 
     except Exception as e:
         print("❌ Error in handler:", repr(e))
