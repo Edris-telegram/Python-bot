@@ -47,16 +47,13 @@ def parse_cookie_input(cookie_input):
             })
     return cookies
 
-async def try_selectors(page, selectors, timeout=5000, step=""):
+async def try_selectors(page, selectors, timeout=5000):
     for sel in selectors:
         try:
-            print(f"[🔎] Trying selector: {sel} ({step})")
             handle = await page.wait_for_selector(sel, timeout=timeout)
             if handle:
-                print(f"[✅] Found selector: {sel} ({step})")
                 return sel
-        except Exception as e:
-            print(f"[❌] Selector failed: {sel} ({step}) -> {e}")
+        except Exception:
             continue
     return None
 
@@ -71,7 +68,7 @@ async def run_once(headless=True):
         print("ERROR: Failed to parse cookie input.")
         return
 
-    print("🚀 Starting Playwright (async)...")
+    print("Starting Playwright (async)...")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -88,12 +85,10 @@ async def run_once(headless=True):
 
             print("[→] Visiting home...")
             await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
-            print("[✅] Home loaded")
             await asyncio.sleep(2)
 
             print(f"[→] Opening tweet: {TWEET_URL}")
             await page.goto(TWEET_URL, wait_until="domcontentloaded", timeout=60000)
-            print("[✅] Tweet loaded")
             await asyncio.sleep(2)
 
             textbox_selectors = [
@@ -103,7 +98,7 @@ async def run_once(headless=True):
                 "div[data-testid='tweetTextarea_0']",
             ]
 
-            sel = await try_selectors(page, textbox_selectors, timeout=7000, step="reply textbox")
+            sel = await try_selectors(page, textbox_selectors, timeout=7000)
 
             if not sel:
                 reply_buttons = [
@@ -111,28 +106,26 @@ async def run_once(headless=True):
                     "div[role='button'][data-testid='reply']",
                     "a[href$='/reply']",
                 ]
-                rb = await try_selectors(page, reply_buttons, timeout=5000, step="reply button")
+                rb = await try_selectors(page, reply_buttons, timeout=5000)
                 if rb:
                     try:
                         print(f"[→] Clicking reply button ({rb})...")
                         await page.click(rb)
-                        print(f"[✅] Clicked reply button ({rb})")
                         await asyncio.sleep(1.5)
-                        sel = await try_selectors(page, textbox_selectors, timeout=7000, step="reply textbox after click")
+                        sel = await try_selectors(page, textbox_selectors, timeout=7000)
                     except Exception as e:
                         print(f"[⚠️] Failed clicking reply button: {e}")
 
             if not sel:
                 print("⚠️ Reply textbox not found — likely cookie issue.")
                 await page.screenshot(path="debug_tweet.png")
-                print("💾 Saved debug_tweet.png")
+                print("Saved debug_tweet.png")
                 return
 
             print(f"[→] Using textbox selector: {sel}")
             await page.click(sel)
             await asyncio.sleep(0.3)
             await page.fill(sel, FIXED_MESSAGE)
-            print(f"[✅] Filled textbox with: {FIXED_MESSAGE}")
             await asyncio.sleep(0.4)
 
             send_selectors = [
@@ -144,15 +137,13 @@ async def run_once(headless=True):
             sent = False
             for s in send_selectors:
                 try:
-                    print(f"[→] Trying send button: {s}")
                     btn = await page.wait_for_selector(s, timeout=5000)
                     if btn:
+                        print(f"[→] Clicking send button ({s})")
                         await btn.click()
-                        print(f"[✅] Clicked send button ({s})")
                         sent = True
                         break
-                except Exception as e:
-                    print(f"[❌] Failed on send button {s}: {e}")
+                except Exception:
                     continue
 
             if not sent:
@@ -161,7 +152,6 @@ async def run_once(headless=True):
                     await page.keyboard.down("Control")
                     await page.keyboard.press("Enter")
                     await page.keyboard.up("Control")
-                    print("[✅] Sent reply via keyboard fallback")
                     sent = True
                 except Exception as e:
                     print(f"[❌] Keyboard fallback failed: {e}")
@@ -173,13 +163,13 @@ async def run_once(headless=True):
             else:
                 print("❌ Could not send reply. Screenshotting...")
                 await page.screenshot(path="error_debug.png")
-                print("💾 Saved error_debug.png")
+                print("Saved error_debug.png")
 
         except Exception as e:
             print("❌ Exception during run:", e)
             try:
                 await page.screenshot(path="error_debug.png")
-                print("💾 Saved error_debug.png")
+                print("Saved error_debug.png")
             except Exception:
                 pass
         finally:
@@ -189,21 +179,21 @@ async def run_once(headless=True):
                 pass
             await browser.close()
 
-# -------- Dummy FastAPI Server --------
+# -------- FastAPI Server --------
 app = FastAPI()
 
 @app.get("/")
 async def root():
     return {"status": "alive", "message": "Render service is up!"}
 
-def start_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/run")
+async def run_reply():
+    """Trigger the Playwright reply job"""
+    headless_flag = os.environ.get("HEADLESS", "1") not in ("0", "false", "False")
+    asyncio.create_task(run_once(headless=headless_flag))
+    return {"status": "started", "message": "Reply job triggered"}
 
 # -------- Main --------
 if __name__ == "__main__":
-    import threading
-    threading.Thread(target=start_dummy_server, daemon=True).start()
-
-    headless_flag = os.environ.get("HEADLESS", "1") not in ("0", "false", "False")
-    asyncio.run(run_once(headless=headless_flag))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
