@@ -6,3 +6,5 @@ selenium
 webdriver-manager
 gunicorn
 requests
+telethon
+tweepy
