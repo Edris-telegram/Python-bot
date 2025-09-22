@@ -35,4 +35,4 @@ RUN playwright install --with-deps chromium
 EXPOSE 10000
 
 # Start the Twitter bot
-CMD ["python", "-u", "prototype_reply.py"]
+CMD ["python", "-u", "telegram.py"]
