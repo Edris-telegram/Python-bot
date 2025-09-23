@@ -8,3 +8,4 @@ gunicorn
 requests
 telethon
 tweepy
+aiohttp
