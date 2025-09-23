@@ -26,11 +26,11 @@ WATCH_GROUPS = [int(gid) for gid in GROUPS_CONFIG.keys()]
 
 # ------------------ TWITTER CONFIG ------------------
 API_KEY = "IICzPEUCK5fbbqy9gS2ZvN4xI"
-API_SECRET = "T1s12fbp5MEr464r2dvcXu4173aOtRRxolLowG0hZWbrwgAKWb
-"
+API_SECRET = "T1s12fbp5MEr464r2dvcXu4173aOtRRxolLowG0hZWbrwgAKWb"
 ACCESS_TOKEN = "19703751554414346248-1bXumlRkndVGv9HFNSNX3Q6xcd9a0e"
 ACCESS_TOKEN_SECRET = "2mook9edE9vfUXA8fMwSXhviS4HZgORSRSK3sXw34F86s"
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAF9U4QEAAAAAUtZkQGtr5V9946Z1u%2Fh%2Fnt2rxXU%3DZotZzPJhxFZ9cg9ViYudPy24dq3ESkzqBBrMTYXAtwKW2KNamE"
+
 
 # ==== Authenticate Tweepy v2 client ====
 twitter_client = tweepy.Client(
