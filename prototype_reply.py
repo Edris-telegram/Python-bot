@@ -3,13 +3,9 @@ import re
 import json
 import os
 import random
-import asyncio
 from datetime import datetime
 from telethon import TelegramClient, events, functions
 import tweepy
-from playwright.async_api import async_playwright
-# Debug flag to simulate API 429 for testing
-FORCE_429 = True
 
 # ------------------ TELEGRAM CONFIG ------------------
 API_ID = "27403368"
@@ -35,6 +31,7 @@ ACCESS_TOKEN = "1917680783331930112-VFp1mvpIqq5xYfxBbG3IiWLPbCJrc9"
 ACCESS_TOKEN_SECRET = "TjIVuZrh0Re7KdkCCsKwuUtTmFSU18UNvuq4tBxSHhh3h"
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAALU24QEAAAAA%2BJgMXUnzs6YRb2w5iEw4E%2FXtgkM%3DVThVeUHqvPH4EAyEqXdTLYzlfOXD8bPBwoCx52xkflPJyf8Nop"
 
+# ==== Authenticate Tweepy v2 client ====
 twitter_client = tweepy.Client(
     bearer_token=BEARER_TOKEN,
     consumer_key=API_KEY,
@@ -56,13 +53,10 @@ TWEET_RE = re.compile(
     re.IGNORECASE
 )
 
-sent_tweet_ids = set()
-USE_API = True  # start with Twitter API mode
-
+sent_tweet_ids = set()  # avoid duplicate replies
 
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
-
 
 def save_json_append(path, entry):
     if not os.path.exists(path):
@@ -78,7 +72,6 @@ def save_json_append(path, entry):
         json.dump(arr, f, indent=2)
         f.truncate()
 
-
 def extract_tweet(text):
     if not text:
         return None, None
@@ -87,9 +80,9 @@ def extract_tweet(text):
         return m.group(1), m.group(2)
     return None, None
 
-
 def get_random_message(chat_id=None):
-    file_path = "messages.txt"
+    file_path = "messages.txt"  # default
+
     if chat_id and str(chat_id) in GROUPS_CONFIG:
         file_path = GROUPS_CONFIG[str(chat_id)]
 
@@ -106,7 +99,6 @@ def get_random_message(chat_id=None):
     except Exception as e:
         print(f"[⚠️] Error reading {file_path}: {e}")
         return random.choice(TRIAL_REPLIES)
-
 
 async def click_inline_button(client, message, match_texts=("👊",)):
     buttons = getattr(message, "buttons", None) or getattr(message, "reply_markup", None)
@@ -129,76 +121,17 @@ async def click_inline_button(client, message, match_texts=("👊",)):
                     return {"clicked": False, "button_text": lbl, "error": repr(e)}
     return {"clicked": False, "reason": "no_matching_label"}
 
-
-async def send_via_playwright(tweet_url, reply_text):
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(storage_state="cookies.json")
-            page = await context.new_page()
-
-            await page.goto(tweet_url)
-            await page.wait_for_selector("div[aria-label='Reply']", timeout=10000)
-            await page.click("div[aria-label='Reply']")
-            await page.fill("div[role='textbox']", reply_text)
-            await page.keyboard.press("Control+Enter")
-
-            await asyncio.sleep(3)
-            await browser.close()
-            print(f"✅ Replied to {tweet_url}: {reply_text} [Browser]")
-            return {"status": "ok", "method": "browser"}
-    except Exception as e:
-        print(f"❌ Playwright error: {e}")
-        return {"status": "fail", "method": "browser", "error": repr(e)}
-
-
 def reply_on_twitter(tweet_url, tweet_id, reply_text):
-    global USE_API
-    if USE_API:
     try:
-        # Simulate forced 429 for testing
-        if FORCE_429:
-            raise Exception("429: Too Many Requests (forced test)")
-
         response = twitter_client.create_tweet(
             text=reply_text,
             in_reply_to_tweet_id=tweet_id
         )
-            print(f"✅ Replied to {tweet_url}: {reply_text} [API]")
-            return {"status": "ok", "method": "api", "data": response.data}
-        except Exception as e:
-            if "429" in str(e):
-                print("⚠️ API rate limit hit (429). Switching to browser mode...")
-                USE_API = False
-                return asyncio.get_event_loop().run_until_complete(
-                    send_via_playwright(tweet_url, reply_text)
-                )
-            else:
-                print("❌ Twitter API error:", e)
-                return {"status": "fail", "method": "api", "error": repr(e)}
-    else:
-        # Try browser
-        result = asyncio.get_event_loop().run_until_complete(
-            send_via_playwright(tweet_url, reply_text)
-        )
-        if result["status"] == "ok":
-            return result
-        else:
-            # Retry API to check if it's back
-            try:
-                response = twitter_client.create_tweet(
-                    text=reply_text,
-                    in_reply_to_tweet_id=tweet_id
-                )
-                USE_API = True
-                print("✅ API available again, switched back.")
-                print(f"✅ Replied to {tweet_url}: {reply_text} [API]")
-                return {"status": "ok", "method": "api", "data": response.data}
-            except Exception as e:
-                if "429" in str(e):
-                    USE_API = False
-                return {"status": "fail", "method": "api", "error": repr(e)}
-
+        print(f"✅ Replied to {tweet_url}: {reply_text}")
+        return response.data
+    except Exception as e:
+        print("❌ Twitter error:", e)
+        return None
 
 # ------------------ TELEGRAM HANDLER ------------------
 client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -219,7 +152,10 @@ async def handler(event):
 
         print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
 
+        # Click smash
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
+
+        # Prepare message
         message_to_send = get_random_message(event.chat_id)
 
         if tweet_id not in sent_tweet_ids:
@@ -244,14 +180,12 @@ async def handler(event):
     except Exception as e:
         print("❌ Handler error:", repr(e))
 
-
 # ------------------ MAIN ------------------
 def main():
     print("🚀 Starting raid_auto_twitter...")
     client.start()
     print("✅ Connected to Telegram. Waiting for raids...")
     client.run_until_disconnected()
-
 
 if __name__ == "__main__":
     main()
