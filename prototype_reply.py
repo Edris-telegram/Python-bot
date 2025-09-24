@@ -8,6 +8,8 @@ from datetime import datetime
 from telethon import TelegramClient, events, functions
 import tweepy
 from playwright.async_api import async_playwright
+# Debug flag to simulate API 429 for testing
+FORCE_429 = True
 
 # ------------------ TELEGRAM CONFIG ------------------
 API_ID = "27403368"
@@ -153,11 +155,15 @@ async def send_via_playwright(tweet_url, reply_text):
 def reply_on_twitter(tweet_url, tweet_id, reply_text):
     global USE_API
     if USE_API:
-        try:
-            response = twitter_client.create_tweet(
-                text=reply_text,
-                in_reply_to_tweet_id=tweet_id
-            )
+    try:
+        # Simulate forced 429 for testing
+        if FORCE_429:
+            raise Exception("429: Too Many Requests (forced test)")
+
+        response = twitter_client.create_tweet(
+            text=reply_text,
+            in_reply_to_tweet_id=tweet_id
+        )
             print(f"✅ Replied to {tweet_url}: {reply_text} [API]")
             return {"status": "ok", "method": "api", "data": response.data}
         except Exception as e:
