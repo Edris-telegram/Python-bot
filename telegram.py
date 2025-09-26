@@ -79,7 +79,7 @@ TWEET_RE = re.compile(
 
 sent_tweet_ids = set()  # avoid duplicate replies
 tweet_count = 0
-TWEET_LIMIT = 50  # adjust if you know your exact free API cap
+TWEET_LIMIT = 17  # adjust if you know your exact free API cap
 ALERT_THRESHOLD = 3
 
 def now_iso():
