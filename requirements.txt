@@ -1,11 +1,10 @@
-playwright
 flask
 fastapi
 uvicorn
-selenium
 webdriver-manager
 gunicorn
 requests
 telethon
 tweepy
 aiohttp
+twilio
