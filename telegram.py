@@ -14,6 +14,8 @@ SESSION = "session"
 RAID_BOT_IDS = [5994885234]
 LOG_FILE = "raid_training_data.json"
 
+print("🚀 Script started, connecting to Telegram...")
+
 # ------------------ GROUP CONFIG ------------------
 CONFIG_FILE = "groups_config.json"
 if os.path.exists(CONFIG_FILE):
@@ -22,15 +24,22 @@ if os.path.exists(CONFIG_FILE):
 else:
     GROUPS_CONFIG = {}
 WATCH_GROUPS = [int(gid) for gid in GROUPS_CONFIG.keys()]
+print(f"📡 Watching groups: {WATCH_GROUPS}")
 
 # ------------------ LOAD TWITTER ACCOUNTS ------------------
-with open("twitter_accounts.json", "r", encoding="utf-8") as f:
-    TWITTER_ACCOUNTS = json.load(f)
+try:
+    with open("twitter_accounts.json", "r", encoding="utf-8") as f:
+        TWITTER_ACCOUNTS = json.load(f)
+    print(f"✅ Loaded {len(TWITTER_ACCOUNTS)} Twitter account(s)")
+except Exception as e:
+    print("❌ Error loading twitter_accounts.json:", e)
+    raise
 
 current_account_index = 0
 
 def get_twitter_client():
     creds = TWITTER_ACCOUNTS[current_account_index]
+    print(f"🔑 Using Twitter account #{current_account_index+1}")
     return tweepy.Client(
         bearer_token=creds["BEARER_TOKEN"],
         consumer_key=creds["API_KEY"],
@@ -51,7 +60,7 @@ twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
 
 def call_alert():
     """Place a call via Twilio to warn about API limit and rotate account."""
-    global current_account_index, twitter_client, tweet_count
+    global current_account_index, twitter_client
     try:
         call = twilio_client.calls.create(
             to=VERIFIED_NUMBER,
@@ -63,10 +72,7 @@ def call_alert():
         # Rotate account after call
         current_account_index = (current_account_index + 1) % len(TWITTER_ACCOUNTS)
         twitter_client = get_twitter_client()
-        
-        # ✅ Reset tweet counter for the new account
-        tweet_count = 0
-        print(f"[🔄] Switched to Twitter account #{current_account_index + 1} (counter reset)")
+        print(f"[🔄] Switched to Twitter account #{current_account_index + 1}")
 
     except Exception as e:
         print("❌ Twilio call error:", e)
@@ -169,17 +175,22 @@ def reply_on_twitter(tweet_url, tweet_id, reply_text):
 
 # ------------------ TELEGRAM HANDLER ------------------
 client = TelegramClient(SESSION, API_ID, API_HASH)
+print("🔗 Telegram client created, waiting for events...")
 
 @client.on(events.NewMessage(chats=WATCH_GROUPS, incoming=True))
 async def handler(event):
+    print("📩 New message detected in group!")
     try:
         msg = event.message
         sender = await event.get_sender()
         sender_id = getattr(sender, "id", None)
+        print(f"👤 Sender ID: {sender_id}")
         if not sender_id or sender_id not in RAID_BOT_IDS:
+            print("⚠️ Message ignored (not from raid bot)")
             return
         tweet_url, tweet_id = extract_tweet(msg.text or "")
         if not tweet_id:
+            print("⚠️ No tweet detected in this message")
             return
         print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
