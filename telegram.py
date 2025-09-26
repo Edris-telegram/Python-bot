@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 from telethon import TelegramClient, events, functions
 import tweepy
+from twilio.rest import Client as TwilioClient  # <-- Twilio import
 
 # ------------------ TELEGRAM CONFIG ------------------
 API_ID = "27403368"
@@ -31,7 +32,6 @@ ACCESS_TOKEN = "1917680783331930112-VFp1mvpIqq5xYfxBbG3IiWLPbCJrc9"
 ACCESS_TOKEN_SECRET = "TjIVuZrh0Re7KdkCCsKwuUtTmFSU18UNvuq4tBxSHhh3h"
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAALU24QEAAAAA%2BJgMXUnzs6YRb2w5iEw4E%2FXtgkM%3DVThVeUHqvPH4EAyEqXdTLYzlfOXD8bPBwoCx52xkflPJyf8Nop"
 
-
 # ==== Authenticate Tweepy v2 client ====
 twitter_client = tweepy.Client(
     bearer_token=BEARER_TOKEN,
@@ -40,6 +40,29 @@ twitter_client = tweepy.Client(
     access_token=ACCESS_TOKEN,
     access_token_secret=ACCESS_TOKEN_SECRET
 )
+
+# ------------------ TWILIO CONFIG ------------------
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+VERIFIED_NUMBER = os.getenv("VERIFIED_PHONE_NUMBER")
+
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
+
+def call_alert():
+    """Place a call via Twilio to warn about API limit."""
+    if not all([TWILIO_SID, TWILIO_AUTH, TWILIO_NUMBER, VERIFIED_NUMBER]):
+        print("❌ Missing Twilio environment variables, cannot place call.")
+        return
+    try:
+        call = twilio_client.calls.create(
+            to=VERIFIED_NUMBER,
+            from_=TWILIO_NUMBER,
+            twiml='<Response><Say>Warning. Twitter API limit almost reached.</Say></Response>'
+        )
+        print(f"[📞] Call triggered: {call.sid}")
+    except Exception as e:
+        print("❌ Twilio call error:", e)
 
 # ------------------ HELPERS ------------------
 TRIAL_REPLIES = [
@@ -55,6 +78,9 @@ TWEET_RE = re.compile(
 )
 
 sent_tweet_ids = set()  # avoid duplicate replies
+tweet_count = 0
+TWEET_LIMIT = 50  # adjust if you know your exact free API cap
+ALERT_THRESHOLD = 3
 
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
@@ -123,12 +149,19 @@ async def click_inline_button(client, message, match_texts=("👊",)):
     return {"clicked": False, "reason": "no_matching_label"}
 
 def reply_on_twitter(tweet_url, tweet_id, reply_text):
+    global tweet_count
     try:
         response = twitter_client.create_tweet(
             text=reply_text,
             in_reply_to_tweet_id=tweet_id
         )
-        print(f"✅ Replied to {tweet_url}: {reply_text}")
+        tweet_count += 1
+        print(f"✅ Replied to {tweet_url}: {reply_text} (Count: {tweet_count})")
+
+        # Check threshold
+        if TWEET_LIMIT - tweet_count <= ALERT_THRESHOLD:
+            call_alert()
+
         return response.data
     except Exception as e:
         print("❌ Twitter error:", e)
