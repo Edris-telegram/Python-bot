@@ -2,6 +2,7 @@ import re
 import json
 import os
 import random
+import asyncio
 from datetime import datetime
 from telethon import TelegramClient, events, functions
 import tweepy
@@ -14,8 +15,6 @@ SESSION = "session"
 RAID_BOT_IDS = [5994885234]
 LOG_FILE = "raid_training_data.json"
 
-print("🚀 Script started, connecting to Telegram...")
-
 # ------------------ GROUP CONFIG ------------------
 CONFIG_FILE = "groups_config.json"
 if os.path.exists(CONFIG_FILE):
@@ -24,22 +23,18 @@ if os.path.exists(CONFIG_FILE):
 else:
     GROUPS_CONFIG = {}
 WATCH_GROUPS = [int(gid) for gid in GROUPS_CONFIG.keys()]
-print(f"📡 Watching groups: {WATCH_GROUPS}")
 
 # ------------------ LOAD TWITTER ACCOUNTS ------------------
-try:
-    with open("twitter_accounts.json", "r", encoding="utf-8") as f:
-        TWITTER_ACCOUNTS = json.load(f)
-    print(f"✅ Loaded {len(TWITTER_ACCOUNTS)} Twitter account(s)")
-except Exception as e:
-    print("❌ Error loading twitter_accounts.json:", e)
-    raise
+with open("twitter_accounts.json", "r", encoding="utf-8") as f:
+    TWITTER_ACCOUNTS = json.load(f)
 
 current_account_index = 0
+tweet_count = 0
+TWEET_LIMIT = 17  # adjust per account
+ALERT_THRESHOLD = 2 # call when 3 left
 
 def get_twitter_client():
     creds = TWITTER_ACCOUNTS[current_account_index]
-    print(f"🔑 Using Twitter account #{current_account_index+1}")
     return tweepy.Client(
         bearer_token=creds["BEARER_TOKEN"],
         consumer_key=creds["API_KEY"],
@@ -60,7 +55,7 @@ twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
 
 def call_alert():
     """Place a call via Twilio to warn about API limit and rotate account."""
-    global current_account_index, twitter_client
+    global current_account_index, twitter_client, tweet_count
     try:
         call = twilio_client.calls.create(
             to=VERIFIED_NUMBER,
@@ -72,6 +67,7 @@ def call_alert():
         # Rotate account after call
         current_account_index = (current_account_index + 1) % len(TWITTER_ACCOUNTS)
         twitter_client = get_twitter_client()
+        tweet_count = 0  # reset counter
         print(f"[🔄] Switched to Twitter account #{current_account_index + 1}")
 
     except Exception as e:
@@ -91,9 +87,6 @@ TWEET_RE = re.compile(
 )
 
 sent_tweet_ids = set()
-tweet_count = 0
-TWEET_LIMIT = 50  # adjust per account limit
-ALERT_THRESHOLD = 3  # call when only 3 tweets left before limit
 
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
@@ -175,22 +168,17 @@ def reply_on_twitter(tweet_url, tweet_id, reply_text):
 
 # ------------------ TELEGRAM HANDLER ------------------
 client = TelegramClient(SESSION, API_ID, API_HASH)
-print("🔗 Telegram client created, waiting for events...")
 
 @client.on(events.NewMessage(chats=WATCH_GROUPS, incoming=True))
 async def handler(event):
-    print("📩 New message detected in group!")
     try:
         msg = event.message
         sender = await event.get_sender()
         sender_id = getattr(sender, "id", None)
-        print(f"👤 Sender ID: {sender_id}")
         if not sender_id or sender_id not in RAID_BOT_IDS:
-            print("⚠️ Message ignored (not from raid bot)")
             return
         tweet_url, tweet_id = extract_tweet(msg.text or "")
         if not tweet_id:
-            print("⚠️ No tweet detected in this message")
             return
         print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
@@ -215,11 +203,11 @@ async def handler(event):
         print("❌ Handler error:", repr(e))
 
 # ------------------ MAIN ------------------
-def main():
+async def main():
     print("🚀 Starting raid_auto_twitter...")
-    client.start()
+    await client.start()
     print("✅ Connected to Telegram. Waiting for raids...")
-    client.run_until_disconnected()
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
