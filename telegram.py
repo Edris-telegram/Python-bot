@@ -1,4 +1,3 @@
-# raid_auto_twitter.py
 import re
 import json
 import os
@@ -6,13 +5,13 @@ import random
 from datetime import datetime
 from telethon import TelegramClient, events, functions
 import tweepy
-from twilio.rest import Client as TwilioClient  # <-- Twilio import
+from twilio.rest import Client as TwilioClient
 
 # ------------------ TELEGRAM CONFIG ------------------
 API_ID = "27403368"
 API_HASH = "7cfc7759b82410f5d90641d6fc415f"
-SESSION = "session"               # session.session
-RAID_BOT_IDS = [5994885234]       # allowed raid bot ID(s)
+SESSION = "session"
+RAID_BOT_IDS = [5994885234]
 LOG_FILE = "raid_training_data.json"
 
 # ------------------ GROUP CONFIG ------------------
@@ -22,24 +21,25 @@ if os.path.exists(CONFIG_FILE):
         GROUPS_CONFIG = json.load(f)
 else:
     GROUPS_CONFIG = {}
-
 WATCH_GROUPS = [int(gid) for gid in GROUPS_CONFIG.keys()]
 
-# ------------------ TWITTER CONFIG ------------------
-API_KEY = "OwRbI9wi8eglE4yAxeiJgdtBr"
-API_SECRET = "HenKDXkitpno7Ciiql1FWuq1aDVuGamocqu2gswHfDMe7j6qjk"
-ACCESS_TOKEN = "1917680783331930112-VFp1mvpIqq5xYfxBbG3IiWLPbCJrc9"
-ACCESS_TOKEN_SECRET = "TjIVuZrh0Re7KdkCCsKwuUtTmFSU18UNvuq4tBxSHhh3h"
-BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAALU24QEAAAAA%2BJgMXUnzs6YRb2w5iEw4E%2FXtgkM%3DVThVeUHqvPH4EAyEqXdTLYzlfOXD8bPBwoCx52xkflPJyf8Nop"
+# ------------------ LOAD TWITTER ACCOUNTS ------------------
+with open("twitter_accounts.json", "r", encoding="utf-8") as f:
+    TWITTER_ACCOUNTS = json.load(f)
 
-# ==== Authenticate Tweepy v2 client ====
-twitter_client = tweepy.Client(
-    bearer_token=BEARER_TOKEN,
-    consumer_key=API_KEY,
-    consumer_secret=API_SECRET,
-    access_token=ACCESS_TOKEN,
-    access_token_secret=ACCESS_TOKEN_SECRET
-)
+current_account_index = 0
+
+def get_twitter_client():
+    creds = TWITTER_ACCOUNTS[current_account_index]
+    return tweepy.Client(
+        bearer_token=creds["BEARER_TOKEN"],
+        consumer_key=creds["API_KEY"],
+        consumer_secret=creds["API_SECRET"],
+        access_token=creds["ACCESS_TOKEN"],
+        access_token_secret=creds["ACCESS_TOKEN_SECRET"]
+    )
+
+twitter_client = get_twitter_client()
 
 # ------------------ TWILIO CONFIG ------------------
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -50,17 +50,24 @@ VERIFIED_NUMBER = os.getenv("VERIFIED_PHONE_NUMBER")
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
 
 def call_alert():
-    """Place a call via Twilio to warn about API limit."""
-    if not all([TWILIO_SID, TWILIO_AUTH, TWILIO_NUMBER, VERIFIED_NUMBER]):
-        print("❌ Missing Twilio environment variables, cannot place call.")
-        return
+    """Place a call via Twilio to warn about API limit and rotate account."""
+    global current_account_index, twitter_client, tweet_count
     try:
         call = twilio_client.calls.create(
             to=VERIFIED_NUMBER,
             from_=TWILIO_NUMBER,
-            twiml='<Response><Say>Warning. Twitter API limit almost reached.</Say></Response>'
+            twiml='<Response><Say>Warning. Twitter API limit reached. Switching account now.</Say></Response>'
         )
         print(f"[📞] Call triggered: {call.sid}")
+
+        # Rotate account after call
+        current_account_index = (current_account_index + 1) % len(TWITTER_ACCOUNTS)
+        twitter_client = get_twitter_client()
+        
+        # ✅ Reset tweet counter for the new account
+        tweet_count = 0
+        print(f"[🔄] Switched to Twitter account #{current_account_index + 1} (counter reset)")
+
     except Exception as e:
         print("❌ Twilio call error:", e)
 
@@ -77,10 +84,10 @@ TWEET_RE = re.compile(
     re.IGNORECASE
 )
 
-sent_tweet_ids = set()  # avoid duplicate replies
+sent_tweet_ids = set()
 tweet_count = 0
-TWEET_LIMIT = 17  # adjust if you know your exact free API cap
-ALERT_THRESHOLD = 3
+TWEET_LIMIT = 50  # adjust per account limit
+ALERT_THRESHOLD = 3  # call when only 3 tweets left before limit
 
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
@@ -108,30 +115,22 @@ def extract_tweet(text):
     return None, None
 
 def get_random_message(chat_id=None):
-    file_path = "messages.txt"  # default
-
+    file_path = "messages.txt"
     if chat_id and str(chat_id) in GROUPS_CONFIG:
         file_path = GROUPS_CONFIG[str(chat_id)]
-
     if not os.path.exists(file_path):
-        print(f"[⚠️] {file_path} not found for chat {chat_id}. Using default trial replies.")
         return random.choice(TRIAL_REPLIES)
-
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
-        if not lines:
-            return random.choice(TRIAL_REPLIES)
-        return random.choice(lines)
-    except Exception as e:
-        print(f"[⚠️] Error reading {file_path}: {e}")
+        return random.choice(lines) if lines else random.choice(TRIAL_REPLIES)
+    except Exception:
         return random.choice(TRIAL_REPLIES)
 
 async def click_inline_button(client, message, match_texts=("👊",)):
     buttons = getattr(message, "buttons", None) or getattr(message, "reply_markup", None)
     if not buttons:
         return {"clicked": False, "reason": "no_buttons"}
-
     for row in buttons:
         for btn in row:
             lbl = getattr(btn, "text", "") or ""
@@ -142,7 +141,6 @@ async def click_inline_button(client, message, match_texts=("👊",)):
                         msg_id=message.id,
                         data=btn.data or b""
                     ))
-                    print(f"[🔘] ✅ Clicked: {lbl}")
                     return {"clicked": True, "button_text": lbl, "callback_result": str(res)}
                 except Exception as e:
                     return {"clicked": False, "button_text": lbl, "error": repr(e)}
@@ -158,13 +156,15 @@ def reply_on_twitter(tweet_url, tweet_id, reply_text):
         tweet_count += 1
         print(f"✅ Replied to {tweet_url}: {reply_text} (Count: {tweet_count})")
 
-        # Check threshold
+        # Alert before hitting limit
         if TWEET_LIMIT - tweet_count <= ALERT_THRESHOLD:
             call_alert()
 
         return response.data
     except Exception as e:
         print("❌ Twitter error:", e)
+        # If rate limit or auth issue, alert & rotate
+        call_alert()
         return None
 
 # ------------------ TELEGRAM HANDLER ------------------
@@ -176,29 +176,19 @@ async def handler(event):
         msg = event.message
         sender = await event.get_sender()
         sender_id = getattr(sender, "id", None)
-
         if not sender_id or sender_id not in RAID_BOT_IDS:
             return
-
         tweet_url, tweet_id = extract_tweet(msg.text or "")
         if not tweet_id:
             return
-
         print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
-
-        # Click smash
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
-
-        # Prepare message
         message_to_send = get_random_message(event.chat_id)
-
         if tweet_id not in sent_tweet_ids:
             sent_tweet_ids.add(tweet_id)
             twitter_data = reply_on_twitter(tweet_url, tweet_id, message_to_send)
         else:
-            print(f"[⚠️] Already replied: {tweet_url}")
             twitter_data = None
-
         entry = {
             "time": now_iso(),
             "chat_id": event.chat_id,
@@ -210,7 +200,6 @@ async def handler(event):
             "twitter_response": twitter_data
         }
         save_json_append(LOG_FILE, entry)
-
     except Exception as e:
         print("❌ Handler error:", repr(e))
 
