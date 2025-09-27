@@ -179,8 +179,8 @@ async def handler(event):
         print(f"\n🚨 [RAID DETECTED] Tweet: {tweet_url}")
 
         click_result = await click_inline_button(client, msg, match_texts=("👊",))
+        print(f"🔘 Smash result: {click_result}")
         message_to_send = get_random_message(event.chat_id)
-
         if tweet_id not in sent_tweet_ids:
             sent_tweet_ids.add(tweet_id)
             twitter_data = reply_on_twitter(tweet_url, tweet_id, message_to_send)
