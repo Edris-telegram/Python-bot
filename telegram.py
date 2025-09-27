@@ -63,6 +63,7 @@ def call_alert():
         # Rotate account after call
         current_account_index = (current_account_index + 1) % len(TWITTER_ACCOUNTS)
         twitter_client = get_twitter_client()
+        tweet_count = 0  # ✅ reset after switching
         print(f"[🔄] Switched to Twitter account #{current_account_index + 1}")
 
     except Exception as e:
@@ -82,7 +83,7 @@ TWEET_RE = re.compile(
 )
 
 sent_tweet_ids = set()
-tweet_count = 15
+tweet_count = 0
 TWEET_LIMIT = 17 # adjust per account free limit
 ALERT_THRESHOLD = 1
 
