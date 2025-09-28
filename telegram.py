@@ -83,7 +83,7 @@ TWEET_RE = re.compile(
 )
 
 sent_tweet_ids = set()
-tweet_count = 16
+tweet_count = 0
 TWEET_LIMIT = 17 # adjust per account free limit
 ALERT_THRESHOLD = 1
 
