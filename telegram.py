@@ -8,6 +8,7 @@ import tweepy
 from twilio.rest import Client as TwilioClient
 
 # ------------------ TELEGRAM CONFIG ------------------
+
 API_ID = "27403368"
 API_HASH = "7cfc7759b82410f5d90641d6fc415f"
 SESSION = "session"
@@ -15,6 +16,7 @@ RAID_BOT_IDS = [5994885234]
 LOG_FILE = "raid_training_data.json"
 
 # ------------------ GROUP CONFIG ------------------
+
 CONFIG_FILE = "groups_config.json"
 if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -24,6 +26,7 @@ else:
 WATCH_GROUPS = [int(gid) for gid in GROUPS_CONFIG.keys()]
 
 # ------------------ LOAD TWITTER ACCOUNTS ------------------
+
 with open("twitter_accounts.json", "r", encoding="utf-8") as f:
     TWITTER_ACCOUNTS = json.load(f)
 
@@ -42,6 +45,7 @@ def get_twitter_client():
 twitter_client = get_twitter_client()
 
 # ------------------ TWILIO CONFIG ------------------
+
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -70,6 +74,7 @@ def call_alert():
         print("❌ Twilio call error:", e)
 
 # ------------------ HELPERS ------------------
+
 TRIAL_REPLIES = [
     "Smash ✅🔥",
     "In! 🚀",
@@ -84,7 +89,7 @@ TWEET_RE = re.compile(
 
 sent_tweet_ids = set()
 tweet_count = 0
-TWEET_LIMIT = 17 # adjust per account free limit
+TWEET_LIMIT = 17  # adjust per account free limit
 ALERT_THRESHOLD = 1
 
 def now_iso():
@@ -121,7 +126,7 @@ def get_random_message(chat_id=None):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
-        return random.choice(lines) if lines else random.choice(TRIAL_REPLIES)
+            return random.choice(lines) if lines else random.choice(TRIAL_REPLIES)
     except Exception:
         return random.choice(TRIAL_REPLIES)
 
@@ -164,6 +169,7 @@ def reply_on_twitter(tweet_url, tweet_id, reply_text):
         return None
 
 # ------------------ TELEGRAM HANDLER ------------------
+
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
 @client.on(events.NewMessage(chats=WATCH_GROUPS, incoming=True))
@@ -203,6 +209,7 @@ async def handler(event):
         print("❌ Handler error:", repr(e))
 
 # ------------------ MAIN ------------------
+
 def main():
     print("🚀 Starting raid_auto_twitter...")
     client.start()
