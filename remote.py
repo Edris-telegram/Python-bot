@@ -31,25 +31,18 @@ async def main():
 
         print("Login successful, navigating to new post page...")
         await page.goto("https://coinmarketcap.com/community/new-post/")
-        await page.wait_for_selector('textarea[placeholder*="What’s happening"]', timeout=15000)
+        await page.wait_for_selector('textarea[placeholder*=\"What’s happening\"]', timeout=15000)
 
         print("Filling in post content...")
-        await page.fill('textarea[placeholder*="What’s happening"]', MESSAGE)
+        await page.fill('textarea[placeholder*=\"What’s happening\"]', MESSAGE)
 
         print("Submitting post...")
-        await page.click('button:has-text("Post")')
+        await page.click('button:has-text(\"Post\")')
         await page.wait_for_timeout(5000)
 
         print("✅ Post created successfully!")
 
         await browser.close()
 
-asyncio.run(main())        print("Submitting post...")
-        await page.click('button:has-text("Post")')
-        await page.wait_for_timeout(5000)
-
-        print("✅ Post created successfully!")
-
-        await browser.close()
-
+# Correctly placed outside the async function
 asyncio.run(main())
