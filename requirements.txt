@@ -2,9 +2,9 @@ flask
 fastapi
 uvicorn
 webdriver-manager
-gunicorn
 requests
 telethon
 tweepy
 aiohttp
 twilio
+playwright
