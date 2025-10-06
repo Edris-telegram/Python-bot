@@ -21,4 +21,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 10000
 
 # Start the Twitter bot
-CMD ["python", "-u", "rush.py"]
+CMD ["python", "-u", "remote.py"]
