@@ -1,8 +1,7 @@
 import asyncio
 from playwright.async_api import async_playwright
 
-BROWSERLESS_WS = "wss://chrome.browserless.io?token=2TBcCoG2vzP3UFs93f92e1471c723563c170e676ec2e2d255"
-
+BROWSERLESS_WS = "wss://production-sfo.browserless.io?token=2TBcCoG2vzP3UFs93f92e1471c723563c170e676ec2e2d255"
 async def run():
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(BROWSERLESS_WS)
